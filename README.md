@@ -2,7 +2,7 @@
 
 A Tampermonkey script that finds the images, videos and audio on any page, including HLS (`.m3u8`) streams that players load behind a `blob:` address, and saves them.
 
-Press **Alt+D**, or the small ⬇ button at the bottom right (it can be hidden from Tampermonkey's menu).
+Press **Alt+D**, or the ⬇ button at the bottom right (its badge counts the videos and audio found; it can be hidden from Tampermonkey's menu). The panel has a filter box on top, and **Esc** closes it.
 
 ## What it does
 

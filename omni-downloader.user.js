@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.4
+// @version      1.5
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it.
 // @author       Adztrz
 // @homepageURL  https://github.com/Adztrz/omni-downloader
@@ -462,105 +462,171 @@
   }
 
   // ---------- the panel ----------
+  // the ERP Dock's look: Faust's Night Ledger palette, a 48px square button, a panel that opens as a halftone wave of dots
+  // from the button's corner, a filter bar on top, segmented tabs, rows that light up on hover
   const css = `
     :host { all: initial; }
     * { box-sizing: border-box; }
-    .fab { position: fixed; right: 16px; bottom: 16px; z-index: 2147483646; display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px;
-      border: 0; border-radius: 8px; background: #090b0c; color: #efefed; font: 500 13px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer;
-      box-shadow: inset 0 0 0 1px #363738, 0 12px 10px rgba(0,0,0,.25), 0 2px 2px rgba(0,0,0,.2); opacity: .85; }
-    .fab:hover { opacity: 1; } .fab b { font-weight: 500; color: #8a8b8a; font-variant-numeric: tabular-nums; }
-    .p { position: fixed; right: 16px; bottom: 60px; z-index: 2147483647; width: min(560px, calc(100vw - 32px)); max-height: min(78vh, 760px);
-      display: flex; flex-direction: column; border-radius: 8px; background: #090b0c; color: #b3b0af;
-      font: 400 13px/1.5 Inter, ui-sans-serif, system-ui, sans-serif; -webkit-font-smoothing: antialiased;
-      box-shadow: inset 0 0 0 1px #363738, 0 40px 32px rgba(0,0,0,.18), 0 22px 18px rgba(0,0,0,.2), 0 6px 5px rgba(0,0,0,.18); }
-    .hd { display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px 14px; }
-    .tag { flex: 1; font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: #8a8b8a; }
-    .tag::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%; background: #e9e1dc; vertical-align: 1px; }
-    .tabs { display: flex; gap: 2px; margin: 0 12px; padding: 2px; border-radius: 8px; background: #07090b; }
-    .tabs button { flex: 1; height: 28px; border: 0; border-radius: 6px; background: none; color: #8a8b8a; font: inherit; cursor: pointer; }
-    .tabs button.on { background: #1a1d1e; color: #efefed; }
-    .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; }
-    .bar label { display: flex; align-items: center; gap: 6px; color: #8a8b8a; font-size: 12px; }
-    .body { overflow: auto; overscroll-behavior: contain; padding: 0 12px 12px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; }
-    .cell { position: relative; aspect-ratio: 1; border-radius: 6px; overflow: hidden; background: #07090b; box-shadow: inset 0 0 0 1px #262727; cursor: pointer; }
+    .fab, .p { --canvas: #07090b; --card: #090b0c; --raised: #1a1d1e; --edge: #363738; --hair: #262727; --bone: #e9e1dc; --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a;
+      --green: #55bc82; --red: #ff6a5c; --blue: #3e7edf; --soft: cubic-bezier(.1, 0, .1, 1); --out: cubic-bezier(.22, 1, .36, 1);
+      font: 400 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "cv11", "tnum"; -webkit-font-smoothing: antialiased; }
+    .fab { position: fixed; right: 16px; bottom: 16px; z-index: 2147483646; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 12px; cursor: pointer;
+      display: grid; place-items: center; background: var(--card); color: var(--bone);
+      box-shadow: inset 0 0 0 1px var(--edge), 0 12px 24px rgba(0,0,0,.35), 0 2px 4px rgba(0,0,0,.3);
+      transition: transform .25s var(--out), box-shadow .25s var(--out); animation: in .6s var(--soft) both; }
+    .fab:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px #696a68, 0 16px 28px rgba(0,0,0,.4), 0 2px 4px rgba(0,0,0,.3); }
+    .fab:active { transform: scale(.94); }
+    .fab svg { width: 22px; height: 22px; grid-area: 1 / 1; transition: transform .35s var(--out), opacity .2s; }
+    .fab svg.x { transform: rotate(-90deg) scale(.6); opacity: 0; }
+    .fab[aria-expanded="true"] svg.open { transform: rotate(90deg) scale(.6); opacity: 0; } .fab[aria-expanded="true"] svg.x { transform: none; opacity: 1; }
+    .fab .n { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--bone); color: var(--canvas);
+      font: 600 11px/20px "JetBrains Mono", ui-monospace, monospace; text-align: center; box-shadow: 0 0 0 2px var(--card); }
+    .fab .n:empty { display: none; }
+    @keyframes in { from { opacity: 0; transform: translateY(12px) scale(.9); filter: blur(2px); } }
+    .p { position: fixed; right: 16px; bottom: 76px; z-index: 2147483647; width: min(560px, calc(100vw - 32px)); max-height: min(720px, calc(100vh - 120px));
+      display: flex; flex-direction: column; border-radius: 10px; background: var(--card); color: var(--body); overflow: hidden; transform-origin: bottom right;
+      box-shadow: inset 0 0 0 1px var(--edge), 0 40px 32px rgba(0,0,0,.18), 0 22px 18px rgba(0,0,0,.2), 0 12px 10px rgba(0,0,0,.2), 0 6px 5px rgba(0,0,0,.18), 0 2px 2px rgba(0,0,0,.2);
+      animation: ht-open .5s var(--out) both; }
+    .p.out { animation: ht-close .22s cubic-bezier(.5, 0, .75, 0) both; pointer-events: none; }
+    /* the wave front of dots: solid behind it, a band of dots on it, nothing ahead; the mask goes once it's open */
+    .p:not(.done), .p.out {
+      mask: radial-gradient(circle at 100% 100%, #000 calc(var(--ht-w) - 56px), transparent calc(var(--ht-w) - 55px)) 0 0 / 100% 100% no-repeat,
+        radial-gradient(circle, #000 1.6px, transparent 2.2px) 0 0 / 6px 6px,
+        radial-gradient(circle at 100% 100%, #000 calc(var(--ht-w) - 8px), transparent var(--ht-w)) 0 0 / 100% 100% no-repeat;
+      mask-composite: add, intersect; }
+    @keyframes ht-open { from { --ht-w: 0px; transform: translateY(6px); } to { --ht-w: 1100px; transform: none; } }
+    @keyframes ht-close { from { --ht-w: 900px; } to { --ht-w: 0px; transform: translateY(4px); } }
+    @media (prefers-reduced-motion: reduce) { .fab, .p, .p.out { animation: none; } .p:not(.done) { mask: none; } }
+
+    .top { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--hair); }
+    .top > svg { width: 16px; height: 16px; color: var(--muted); flex: none; }
+    .top input { flex: 1; min-width: 0; height: 32px; border: 0; outline: 0; background: none; color: var(--paper); font: inherit; font-size: 15px; }
+    .top input::placeholder { color: var(--muted); }
+    .shut { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; flex: none; }
+    .shut:hover { background: var(--raised); color: var(--paper); } .shut svg { width: 16px; height: 16px; } .shut:last-child { margin-right: -6px; }
+    .main { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+    .tabs { display: flex; gap: 2px; margin: 10px 12px 0; padding: 2px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
+    .tabs button { flex: 1; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; transition: background .2s, color .2s; }
+    .tabs button[aria-pressed="true"] { background: var(--raised); color: var(--paper); }
+    .tabs button b { font-weight: 500; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; margin-left: 6px; color: inherit; opacity: .8; }
+    .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px 4px; }
+    .bar label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+    .body { overflow: auto; overscroll-behavior: contain; padding: 8px 6px 10px; flex: 1; min-height: 120px; }
+    @media (max-height: 560px) { .foot { display: none; } .p { bottom: 72px; max-height: calc(100vh - 84px); } }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; padding: 0 6px; }
+    .cell { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); cursor: pointer;
+      transition: box-shadow .2s, transform .15s var(--out); }
+    .cell:hover { box-shadow: inset 0 0 0 1px #696a68; transform: translateY(-1px); }
     .cell img { width: 100%; height: 100%; object-fit: contain; display: block; }
-    .cell.sel { box-shadow: inset 0 0 0 2px #3e7edf; }
-    .cell .dim { position: absolute; left: 4px; bottom: 4px; padding: 0 5px; border-radius: 4px; background: rgba(7,9,11,.82); color: #efefed; font: 11px/18px "JetBrains Mono", ui-monospace, monospace; }
-    .cell .ck { position: absolute; top: 4px; left: 4px; width: 18px; height: 18px; border-radius: 4px; background: rgba(7,9,11,.7); box-shadow: inset 0 0 0 1px #696a68; }
-    .cell.sel .ck { background: #3e7edf; box-shadow: none; }
-    .cell.sel .ck::after { content: ""; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
-    .row { display: grid; gap: 6px; padding: 10px; border-radius: 6px; background: #07090b; }
-    .row + .row { margin-top: 6px; }
-    .row .t { color: #efefed; font-weight: 500; overflow-wrap: anywhere; }
-    .row .u { font: 11px/1.5 "JetBrains Mono", ui-monospace, monospace; color: #8a8b8a; overflow-wrap: anywhere; max-height: 3em; overflow: hidden; }
-    .row .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-    .row.m { grid-template-columns: 128px minmax(0, 1fr); gap: 10px; align-items: start; }
-    .row .info { display: grid; gap: 6px; min-width: 0; }
-    .th { position: relative; width: 128px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: #000; box-shadow: inset 0 0 0 1px #262727; cursor: pointer; }
+    .cell.sel { box-shadow: inset 0 0 0 2px var(--bone); }
+    .cell .dim { position: absolute; left: 4px; bottom: 4px; padding: 0 5px; border-radius: 4px; background: rgba(7,9,11,.82); color: var(--paper); font: 11px/18px "JetBrains Mono", ui-monospace, monospace; }
+    .cell .ck { position: absolute; top: 6px; left: 6px; width: 18px; height: 18px; border-radius: 5px; background: rgba(7,9,11,.7); box-shadow: inset 0 0 0 1px #696a68; transition: background .15s; }
+    .cell.sel .ck { background: var(--bone); box-shadow: none; }
+    .cell.sel .ck::after { content: ""; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px; border: solid var(--canvas); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+    .row { display: grid; gap: 6px; padding: 10px; border-radius: 8px; transition: background .2s; }
+    .row:hover { background: var(--raised); }
+    .row + .row { box-shadow: 0 -1px 0 var(--hair); } .row:hover, .row:hover + .row { box-shadow: none; }
+    .row .t { color: var(--paper); font-weight: 500; font-size: 13px; overflow-wrap: anywhere; }
+    .row .u { font: 11px/1.5 "JetBrains Mono", ui-monospace, monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 2px; }
+    .row.m { grid-template-columns: 128px minmax(0, 1fr); gap: 12px; align-items: start; }
+    .row .info { display: grid; gap: 4px; min-width: 0; }
+    .th { position: relative; width: 128px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: #000; box-shadow: inset 0 0 0 1px var(--hair); cursor: pointer; }
     .th video { width: 100%; height: 100%; object-fit: contain; display: block; }
-    .th:empty::after, .th.none::after { content: attr(data-note); position: absolute; inset: 0; display: grid; place-items: center; color: #696a68; font-size: 11px; text-align: center; }
+    .th:empty::after, .th.none::after { content: attr(data-note); position: absolute; inset: 0; display: grid; place-items: center; color: #696a68; font-size: 11px; text-align: center;
+      background: radial-gradient(circle, rgba(233,225,220,.07) 0 1px, transparent 1.5px) 0 0 / 8px 8px; }
     .th.none video { display: none; }
-    .k { display: inline-block; padding: 0 6px; border-radius: 4px; background: #1a1d1e; color: #efefed; font: 11px/18px "JetBrains Mono", ui-monospace, monospace; }
-    button.b { height: 30px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: #efefed; font: inherit; cursor: pointer; box-shadow: inset 0 0 0 1px #363738; }
-    button.b:hover { box-shadow: inset 0 0 0 1px #696a68; } button.b:disabled { opacity: .4; cursor: default; }
-    button.pri { background: #e9e1dc; color: #07090b; box-shadow: none; }
-    button.x { width: 30px; padding: 0; box-shadow: none; color: #8a8b8a; }
-    select { height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: #1a1d1e; color: #efefed; font: inherit; }
-    input[type=number] { width: 64px; height: 28px; padding: 0 6px; border: 0; border-radius: 6px; background: #1a1d1e; color: #efefed; font: inherit; }
-    .prog { height: 4px; border-radius: 2px; background: #262727; overflow: hidden; } .prog i { display: block; height: 100%; width: 0; background: #55bc82; transition: width .2s; }
-    .msg { font-size: 12px; color: #8a8b8a; } .msg.err { color: #ff6a5c; } .msg.ok { color: #55bc82; }
-    .empty { padding: 24px 8px; text-align: center; color: #8a8b8a; }
-    button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid #3e7edf; outline-offset: 2px; }
+    button.b { height: 32px; padding: 0 12px; border: 0; border-radius: 8px; background: none; color: var(--paper); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+      box-shadow: inset 0 0 0 1px var(--edge); transition: box-shadow .2s, transform .1s; }
+    button.b:hover { box-shadow: inset 0 0 0 1px #696a68; } button.b:active { transform: scale(.97); } button.b:disabled { opacity: .4; cursor: default; transform: none; }
+    button.pri { background: var(--bone); color: var(--canvas); box-shadow: 0 1px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.5); }
+    button.pri:hover { box-shadow: 0 1px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.5), 0 0 0 3px rgba(233,225,220,.12); }
+    select { height: 32px; padding: 0 8px; border: 0; border-radius: 8px; background: var(--canvas); color: var(--paper); font: inherit; font-size: 13px; box-shadow: inset 0 0 0 1px var(--edge); cursor: pointer; }
+    input[type=number] { width: 64px; height: 28px; padding: 0 8px; border: 0; border-radius: 8px; background: var(--canvas); color: var(--paper); font: inherit; font-size: 13px; box-shadow: inset 0 0 0 1px var(--edge); }
+    input[type=checkbox] { accent-color: var(--bone); }
+    .prog { height: 4px; border-radius: 2px; background: var(--hair); overflow: hidden; } .prog i { display: block; height: 100%; width: 0; background: var(--green); transition: width .2s; }
+    .msg { font-size: 12px; color: var(--muted); } .msg.err { color: var(--red); } .msg.ok { color: var(--green); }
+    .empty { margin: 8px 10px; padding: 28px 12px; border-radius: 8px; text-align: center; color: var(--muted); font-size: 13px;
+      background: radial-gradient(circle, rgba(233,225,220,.06) 0 1px, transparent 1.5px) 0 0 / 8px 8px; box-shadow: inset 0 0 0 1px var(--hair); }
+    .foot { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); }
+    kbd { font: 11px "JetBrains Mono", ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); }
+    button:focus-visible, select:focus-visible, input:focus-visible, .cell:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
   `;
-  let host, root, fab, panel, tab = store.get("tab", "video"), minSize = store.get("min", 150);
+  // the halftone wave animates a length, which only works on a registered property (and that can't be done inside a shadow root)
+  try { CSS.registerProperty({ name: "--ht-w", syntax: "<length>", inherits: false, initialValue: "9000px" }); } catch {}
+  const ICON = {
+    down: '<svg class="open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+    x: '<svg class="x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    find: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
+    again: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>',
+  };
+  let host, root, fab, panel, main, query = "", tab = store.get("tab", "video"), minSize = store.get("min", 150);
   const picked = new Set(), jobs = new Map(); // url → { ctl, frac, text, err, done }
   const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const btn = (t, run, cls = "b") => { const b = mk("button", cls, t); b.type = "button"; b.onclick = run; return b; };
   const groups = () => {
     const g = { video: [], image: [], audio: [] };
-    for (const it of found.values()) if (!partOf.has(it.url)) (it.kind === "image" ? g.image : it.kind === "audio" ? g.audio : g.video).push(it);
+    const q = fold(query);
+    for (const it of found.values()) if (!partOf.has(it.url) && (!q || fold(`${it.url} ${it.title || ""}`).includes(q))) (it.kind === "image" ? g.image : it.kind === "audio" ? g.audio : g.video).push(it);
     g.video.sort((a, b) => (b.kind === "hls") - (a.kind === "hls") || (b.kind === "video") - (a.kind === "video"));
     return g;
   };
+  const fold = (t) => String(t || "").toLowerCase();
+  const svg = (name) => { const t = document.createElement("template"); t.innerHTML = ICON[name]; return t.content.firstChild; };
   function mount() {
     if (host || !document.body) return;
     host = mk("div"); host.id = "omni-downloader"; root = host.attachShadow({ mode: "closed" });
     root.append(mk("style", null, css));
-    fab = btn("", () => toggle(), "fab"); fab.title = "Omni Downloader (Alt+D)";
+    fab = btn("", () => toggle(), "fab"); fab.title = "Omni Downloader (Alt+D)"; fab.setAttribute("aria-expanded", "false");
+    fab.append(svg("down"), svg("x"), mk("span", "n"));
     root.append(fab); document.documentElement.append(host); drawFab();
   }
   function drawFab() {
     if (!fab) return;
     const n = groups(), media = n.video.length + n.audio.length;
-    fab.replaceChildren("⬇", mk("b", null, media ? `${media} media · ${n.image.length}` : String(n.image.length)));
+    fab.querySelector(".n").textContent = media ? String(media) : "";
+    fab.setAttribute("aria-label", `Omni Downloader: ${media} video and audio, ${n.image.length} images`);
+    fab.setAttribute("aria-expanded", String(!!panel && !panel.classList.contains("out")));
     fab.style.display = store.get("fab", true) || panel ? "" : "none";
   }
   let drawT = 0;
   onChange = () => { clearTimeout(drawT); drawT = setTimeout(() => { drawFab(); if (panel && tab !== "image") draw(); }, 400); };
   function toggle() {
     mount(); if (!root) return;
-    if (panel) { panel.remove(); panel = null; drawFab(); return; }
+    if (panel) {
+      const p = panel; panel = null; main = null; p.classList.add("out"); drawFab();
+      setTimeout(() => p.remove(), matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 230); return;
+    }
     try { scan(); } catch {}
     panel = mk("div", "p"); panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "Omni Downloader");
+    const opened = panel, done = () => opened.classList.add("done"); // drops the dot mask once the wave has passed
+    opened.addEventListener("animationend", done, { once: true }); setTimeout(done, 700); // (a background tab may never end the animation)
+    // the filter bar, made once so typing in it isn't interrupted by redraws
+    const top = mk("div", "top"), q = mk("input"); q.placeholder = "Filter by name or address…"; q.value = query; q.setAttribute("aria-label", "Filter");
+    q.oninput = () => { query = q.value; draw(); };
+    q.onkeydown = (e) => { if (e.key === "Escape") { e.stopPropagation(); if (q.value) { q.value = query = ""; draw(); } else toggle(); } };
+    const again = btn("", () => { try { scan(); } catch {} draw(); }, "shut"); again.append(svg("again")); again.title = "Look again"; again.setAttribute("aria-label", "Look again");
+    const shut = btn("", () => toggle(), "shut"); const xs = svg("x"); xs.classList.remove("x"); shut.append(xs); shut.title = "Close (Esc)"; shut.setAttribute("aria-label", "Close");
+    top.append(svg("find"), q, again, shut);
+    main = mk("div", "main");
+    const foot = mk("div", "foot"); foot.innerHTML = "<span><kbd>Alt</kbd> <kbd>D</kbd> open / close</span><span><kbd>Esc</kbd> close</span><span>Double-click an image to save it</span>";
+    panel.append(top, main, foot);
     root.append(panel); draw(); drawFab();
   }
   function draw() {
     if (!panel) return;
     for (const it of found.values()) if (it.kind === "hls") hlsLoad(it);
-    const g = groups(), body = panel.querySelector(".body"), keep = body ? body.scrollTop : 0;
-    panel.replaceChildren();
-    const hd = mk("div", "hd"); hd.append(mk("span", "tag", "Omni Downloader"), btn("Rescan", () => { try { scan(); } catch {} draw(); }), btn("✕", () => toggle(), "b x"));
-    hd.lastChild.setAttribute("aria-label", "Close"); panel.append(hd);
+    const g = groups(), body = main.querySelector(".body"), keep = body ? body.scrollTop : 0;
+    main.replaceChildren();
     const tabs = mk("div", "tabs");
     for (const [k, t] of [["video", "Video"], ["image", "Images"], ["audio", "Audio"]]) {
       const n = k === "image" ? g.image.filter(big).length : g[k].length;
-      const b = btn(`${t} · ${n}`, () => { tab = k; store.set("tab", k); draw(); }, k === tab ? "on" : ""); b.setAttribute("aria-pressed", String(k === tab)); tabs.append(b);
+      const b = btn(t, () => { tab = k; store.set("tab", k); draw(); }, ""); b.append(mk("b", null, String(n))); b.setAttribute("aria-pressed", String(k === tab)); tabs.append(b);
     }
-    panel.append(tabs);
+    main.append(tabs);
     const nb = mk("div", "body");
     if (tab === "image") drawImages(g.image, nb); else drawMedia(g[tab], nb);
-    panel.append(nb); nb.scrollTop = keep; drawFab();
+    main.append(nb); nb.scrollTop = keep; drawFab();
   }
   const big = (it) => !it.w || (it.w >= minSize && it.h >= minSize) || it.kind !== "image";
 
@@ -574,7 +640,7 @@
     const zip = btn(sel.length ? `ZIP ${sel.length}` : "ZIP", () => saveZip(sel, zip, msg), "b pri"); zip.disabled = !sel.length;
     const each = btn("One by one", () => saveEach(sel, msg)); each.disabled = !sel.length;
     const msg = mk("span", "msg"); bar.append(zip, each, msg);
-    panel.append(bar);
+    main.append(bar);
     if (!shown.length) return nb.append(mk("p", "empty", list.length ? `No images of ${minSize}px or more: lower the number above.` : "No images found yet."));
     const grid = mk("div", "grid");
     for (const it of shown) {
@@ -762,7 +828,10 @@
   // ---------- start ----------
   const ready = () => { mount(); setTimeout(() => { try { scan(); } catch {} drawFab(); }, 1500); };
   if (document.body) ready(); else document.addEventListener("DOMContentLoaded", ready, { once: true });
-  window.addEventListener("keydown", (e) => { if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyD") { e.preventDefault(); toggle(); } }, true);
+  window.addEventListener("keydown", (e) => {
+    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyD") { e.preventDefault(); toggle(); }
+    else if (e.key === "Escape" && panel && document.activeElement === host) { e.preventDefault(); toggle(); } // only while the panel has focus
+  }, true);
   if (typeof GM_registerMenuCommand === "function") {
     GM_registerMenuCommand("Open Omni Downloader (Alt+D)", () => toggle());
     GM_registerMenuCommand("Show / hide the floating button", () => { store.set("fab", !store.get("fab", true)); drawFab(); });
