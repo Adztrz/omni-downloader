@@ -13,6 +13,7 @@ Press **Alt+D**, or the ⬇ button at the bottom right (its badge counts the vid
   - Where the picture and the sound are separate files (Instagram, Facebook, Bilibili and other DASH players), **Save** on the picture finds its sound file (the same Instagram asset id or Bilibili video id, else the same length) and joins the two into one MP4, without re-encoding. If the sound hasn't loaded yet, play the video for a moment and save again. The sound file itself is listed under **Audio** as a sound track, and saves on its own as `.m4a`.
 - **Images**: a grid of every image, including the largest `srcset` entry, `<picture>` sources, CSS backgrounds, posters and `og:image`. Hide the small ones by size, pick some, then save them as a **ZIP** or one by one. Double-click an image to save just that one.
 - **Audio**: audio files, the sound tracks of sites that keep sound apart from the picture, and the separate sound tracks some HLS streams have.
+- Every save shows its progress under the row (parts done for a stream, MB of the total for a file, picture then sound when the two are joined), with **Stop**.
 - **Copy URL** and **Copy ffmpeg** on every stream and file, for anything better done outside the browser.
 - **Frames**: embedded players inside frames report what they find to the page, and their files are fetched with the frame's address as Referer.
 

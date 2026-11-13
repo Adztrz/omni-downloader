@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.6
+// @version      1.7
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it.
 // @author       Adztrz
 // @homepageURL  https://github.com/Adztrz/omni-downloader
@@ -163,22 +163,32 @@
   }
 
   // ---------- fetching (cross-origin through Tampermonkey, with the page that loaded it as Referer) ----------
-  function get(url, type, referer, signal) {
+  // onprog(loaded, total), when given, reports a big file as it arrives (total 0 when the server doesn't say); such a
+  // download has no time limit, since it may take minutes: Stop ends it
+  function get(url, type, referer, signal, onprog) {
     if (typeof GM_xmlhttpRequest !== "function" || /^(blob|data):/.test(url))
-      return fetch(url, { signal, credentials: new URL(url, location.href).origin === location.origin ? "include" : "omit" }).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return type === "text" ? r.text() : r.arrayBuffer(); });
+      return fetch(url, { signal, credentials: new URL(url, location.href).origin === location.origin ? "include" : "omit" }).then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (type === "text") return r.text();
+        if (!onprog || !r.body) return r.arrayBuffer();
+        const total = +r.headers.get("content-length") || 0, rd = r.body.getReader(), chunks = []; let n = 0;
+        for (;;) { const { done, value } = await rd.read(); if (done) break; chunks.push(value); n += value.length; onprog(n, total); }
+        return new Blob(chunks).arrayBuffer();
+      });
     return new Promise((resolve, reject) => {
       const req = GM_xmlhttpRequest({
         method: "GET", url, responseType: type === "text" ? "text" : "arraybuffer", anonymous: false,
         headers: referer ? { Referer: referer } : {},
         onload: (r) => r.status >= 200 && r.status < 300 ? resolve(type === "text" ? r.responseText : r.response) : reject(new Error(`HTTP ${r.status}`)),
-        onerror: () => reject(new Error("network error")), ontimeout: () => reject(new Error("timed out")), timeout: 60000,
+        onerror: () => reject(new Error("network error")), ontimeout: () => reject(new Error("timed out")), timeout: onprog ? 0 : 60000,
+        ...(onprog ? { onprogress: (e) => onprog(e.loaded, e.lengthComputable || e.total > 0 ? e.total : 0) } : {}),
       });
       signal?.addEventListener("abort", () => { try { req.abort(); } catch {} reject(new DOMException("Stopped", "AbortError")); });
     });
   }
-  async function getRetry(url, type, referer, signal, tries = 3) {
+  async function getRetry(url, type, referer, signal, tries = 3, onprog) {
     for (let i = 1; ; i++) {
-      try { return await get(url, type, referer, signal); }
+      try { return await get(url, type, referer, signal, onprog); }
       catch (e) { if (signal?.aborted || i >= tries) throw e; await new Promise((r) => setTimeout(r, 600 * i)); }
     }
   }
@@ -195,18 +205,26 @@
     return clean(last);
   }
   // one direct file: Tampermonkey's own download (cross-origin, keeps the name), else fetch and save
-  // returns a note for the Save button, if there's something to say
-  async function saveDirect(it) {
-    if (it.hlsAudio || EXT.hls.test(it.url)) return saveHlsAudio(it);
+  // returns a note for the Save button, if there's something to say; ui = { signal, progress(fraction, text) } as for HLS
+  const quiet = { signal: undefined, progress: () => {} };
+  // a progress reporter for one file: "Picture 12 MB of 40 MB"; with two files (picture, then sound) each fills half the bar
+  const fileProg = (ui, label, from = 0, span = 1) => (n, total) =>
+    ui.progress(total ? from + span * Math.min(1, n / total) : from, `${label ? label + " " : ""}${bytes(n)}${total ? ` of ${bytes(total)}` : ""}`);
+  async function saveDirect(it, ui = quiet) {
+    if (it.hlsAudio || EXT.hls.test(it.url)) return saveHlsAudio(it, ui);
     const name = fileName(it, it.kind === "image" ? "jpg" : it.kind === "audio" ? "mp3" : "mp4");
-    if (it.kind === "video" && /^https?:/.test(it.url)) return saveVideo(it, BILI.test(it.url) ? `${clean(it.title || document.title)}.mp4` : name);
+    if (it.kind === "video" && /^https?:/.test(it.url)) return saveVideo(it, BILI.test(it.url) ? `${clean(it.title || document.title)}.mp4` : name, ui);
     if (typeof GM_download === "function" && /^https?:/.test(it.url)) {
       try {
-        await new Promise((resolve, reject) => GM_download({ url: it.url, name, headers: { Referer: it.referer || location.href }, onload: resolve, onerror: (e) => reject(new Error(e?.error || "download failed")), ontimeout: () => reject(new Error("timed out")) }));
+        await new Promise((resolve, reject) => {
+          const d = GM_download({ url: it.url, name, headers: { Referer: it.referer || location.href }, onload: resolve, onerror: (e) => reject(new Error(e?.error || "download failed")), ontimeout: () => reject(new Error("timed out")),
+            onprogress: (e) => fileProg(ui, "")(e.loaded || 0, e.lengthComputable || e.total > 0 ? e.total : 0) });
+          ui.signal?.addEventListener("abort", () => { try { d?.abort(); } catch {} reject(new DOMException("Stopped", "AbortError")); });
+        });
         return;
       } catch (e) { if (!/not_whitelisted|not_enabled|not_permitted/i.test(String(e.message))) throw e; } // file type not allowed in Tampermonkey's settings: save it ourselves
     }
-    saveBlob(new Blob([await getRetry(it.url, "buffer", it.referer)]), name);
+    saveBlob(new Blob([await getRetry(it.url, "buffer", it.referer, ui.signal, 3, fileProg(ui, ""))]), name);
   }
 
   // ---------- picture and sound in separate files (Instagram, Facebook and other DASH players) ----------
@@ -215,20 +233,24 @@
   // efg parameter, else the same length) and joins the two into one MP4 with both tracks. Nothing is re-encoded: the boxes
   // are copied and only track numbers, timescales and offsets are rewritten. Fragmented MP4 (what DASH serves) and plain
   // MP4 with one mdat are both handled; anything else is saved as it came.
-  async function saveVideo(it, name) {
-    const V = new Uint8Array(await getRetry(it.url, "buffer", it.referer)), vi = mp4Info(V);
+  async function saveVideo(it, name, ui = quiet) {
+    // where the sound is likely a file of its own (an Instagram or Bilibili id), the picture fills the first half of the bar
+    const split = !!assetKey(it.url) && 0.5;
+    const V = new Uint8Array(await getRetry(it.url, "buffer", it.referer, ui.signal, 3, fileProg(ui, split ? "Picture" : "", 0, split || 1))), vi = mp4Info(V);
     const has = (info, h) => !!info?.traks.some((t) => t.handler === h);
     if (vi && !has(vi, "vide") && has(vi, "soun")) { saveBlob(new Blob([V], { type: "audio/mp4" }), name.replace(/\.\w+$/, "") + ".m4a"); return "Saved (sound only)"; }
     if (!has(vi, "vide") || has(vi, "soun")) { saveBlob(new Blob([V], { type: "video/mp4" }), name); return ""; }
+    ui.progress(split || 0, "Finding its sound…");
     const pair = await soundFor(it);
     if (pair) {
       try {
-        const A = new Uint8Array(await getRetry(pair.url, "buffer", pair.referer || it.referer)), ai = mp4Info(A);
+        const A = new Uint8Array(await getRetry(pair.url, "buffer", pair.referer || it.referer, ui.signal, 3, fileProg(ui, "Sound", split || 0, split || 1))), ai = mp4Info(A);
         if (has(ai, "soun") && !has(ai, "vide") && ai.frag === vi.frag) {
+          ui.progress(1, "Joining picture and sound…"); await new Promise((r) => setTimeout(r, 30));
           saveBlob(new Blob(vi.frag ? joinFragmented(V, vi, A, ai) : joinPlain(V, vi, A, ai), { type: "video/mp4" }), name);
           return "Saved with sound";
         }
-      } catch (e) { console.warn("[omni] joining picture and sound failed:", e); }
+      } catch (e) { if (e.name === "AbortError") throw e; console.warn("[omni] joining picture and sound failed:", e); }
     }
     saveBlob(new Blob([V], { type: "video/mp4" }), name);
     return pair ? "Saved without sound (couldn't join)" : "Saved without sound: play the video so its sound loads, then save again";
@@ -454,11 +476,11 @@
   }
 
   // an HLS audio track (found through a master playlist): its parts joined into one file
-  async function saveHlsAudio(it) {
-    const ctl = new AbortController(), media = parseMedia(await getRetry(it.url, "text", it.referer), it.url);
+  async function saveHlsAudio(it, ui = quiet) {
+    const signal = ui.signal || new AbortController().signal, media = parseMedia(await getRetry(it.url, "text", it.referer, signal), it.url);
     if (media.drm) throw new Error("DRM-protected");
-    const parts = await getSegments(media, it.referer, ctl.signal, () => {});
-    if (media.map) parts.unshift(await getPart(media.map, it.referer, ctl.signal));
+    const parts = await getSegments(media, it.referer, signal, (d, n) => ui.progress(d / n, `${d} / ${n} parts`));
+    if (media.map) parts.unshift(await getPart(media.map, it.referer, signal));
     saveBlob(new Blob(parts), `${clean(it.title)}.${media.map ? "m4a" : "aac"}`);
   }
 
@@ -705,7 +727,8 @@
       const acts = mk("div", "acts");
       if (it.kind === "hls") hlsActs(it, acts, job);
       else if (it.kind === "dash") acts.append(mk("span", "msg", "DASH isn't saved here: copy the ffmpeg command."));
-      else acts.append(btn("Save", async (e) => { const b = e.currentTarget; b.disabled = true; b.textContent = "Saving…"; try { b.textContent = (await saveDirect(it)) || "Saved"; } catch (x) { b.textContent = `Failed: ${x.message}`; } }, "b pri"));
+      else if (job && !job.done && !job.err) acts.append(btn("Stop", () => job.ctl.abort()));
+      else acts.append(btn(job?.done ? "Save again" : "Save", () => runDirect(it), "b pri"));
       acts.append(btn("Copy URL", () => copy(it.url)), btn("Copy ffmpeg", () => copy(`ffmpeg -headers "Referer: ${it.referer || location.href}\\r\\n" -i "${it.url}" -c copy "${fileName(it, "mp4").replace(/\.\w+$/, "")}.mp4"`)));
       info.append(acts);
       if (job) {
@@ -833,6 +856,14 @@
       const media = await saveHls(it, v, ui);
       job.done = true; job.frac = 1; job.text = `Saved${media?.live ? " (a live stream: only what was listed so far)" : ""}.`;
     } catch (e) { job.err = e.name === "AbortError" ? "Stopped." : e.message; }
+    draw();
+  }
+  // a direct file's save, shown like a stream's: a bar with MB done of the total, Stop, and the outcome under it
+  async function runDirect(it) {
+    const ctl = new AbortController(), job = { ctl, frac: 0, text: "Starting…" }; jobs.set(it.url, job); draw();
+    const ui = { signal: ctl.signal, progress: (f, t) => { job.frac = f; job.text = t; if (job.bar?.isConnected) { job.bar.style.width = `${Math.round(f * 100)}%`; job.row.lastChild.textContent = t; } } };
+    try { const note = await saveDirect(it, ui); job.done = true; job.frac = 1; job.text = note ? `${note}.` : "Saved."; }
+    catch (e) { job.err = e.name === "AbortError" ? "Stopped." : e.message; }
     draw();
   }
   function copy(t) { try { GM_setClipboard(t, "text"); } catch { navigator.clipboard?.writeText(t).catch(() => {}); } }
