@@ -57,7 +57,11 @@
   // Bilibili serves each video's picture and sound as two whole fMP4 files named .m4s under /upgcxcode/ (fetched in Range
   // pieces): files, not stream segments
   const BILI = /\/upgcxcode\/.+\.m4s(?:$|[?#])/i;
-  const kindOf = (url) => BILI.test(url) ? "video" : EXT.hls.test(url) ? "hls" : EXT.dash.test(url) ? "dash" : EXT.video.test(url) ? "video" : EXT.audio.test(url) ? "audio" : EXT.image.test(url) ? "image" : null;
+  // judged by the address's path: a query string can carry another address (trackers report what played)
+  const kindOf = (url) => {
+    let p = url; try { if (!/^data:/.test(url)) p = new URL(url).pathname; } catch {}
+    return BILI.test(p) ? "video" : EXT.hls.test(p) ? "hls" : EXT.dash.test(p) ? "dash" : EXT.video.test(p) ? "video" : EXT.audio.test(p) ? "audio" : EXT.image.test(p) ? "image" : null;
+  };
   const abs = (u, base = location.href) => { try { const x = new URL(u, base); return /^(https?|blob|data):$/.test(x.protocol) ? x.href : null; } catch { return null; } };
 
   // ---------- the list (each frame keeps its own; frames send theirs to the top) ----------
