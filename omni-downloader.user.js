@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.7
+// @version      1.8
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it.
 // @author       Adztrz
 // @homepageURL  https://github.com/Adztrz/omni-downloader
@@ -491,7 +491,7 @@
     :host { all: initial; }
     * { box-sizing: border-box; }
     .fab, .p { --canvas: #07090b; --card: #090b0c; --raised: #1a1d1e; --edge: #363738; --hair: #262727; --bone: #e9e1dc; --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a;
-      --green: #55bc82; --red: #ff6a5c; --blue: #3e7edf; --soft: cubic-bezier(.1, 0, .1, 1); --out: cubic-bezier(.22, 1, .36, 1);
+      --green: #55bc82; --red: #ff6a5c; --blue: #3e7edf; --soft: cubic-bezier(.1, 0, .1, 1); --out: cubic-bezier(.22, 1, .36, 1); --swap: cubic-bezier(.76, 0, .24, 1);
       font: 400 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "cv11", "tnum"; -webkit-font-smoothing: antialiased; }
     .fab { position: fixed; right: 16px; bottom: 16px; z-index: 2147483646; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 12px; cursor: pointer;
       display: grid; place-items: center; background: var(--card); color: var(--bone);
@@ -567,7 +567,16 @@
     select { height: 32px; padding: 0 8px; border: 0; border-radius: 8px; background: var(--canvas); color: var(--paper); font: inherit; font-size: 13px; box-shadow: inset 0 0 0 1px var(--edge); cursor: pointer; }
     input[type=number] { width: 64px; height: 28px; padding: 0 8px; border: 0; border-radius: 8px; background: var(--canvas); color: var(--paper); font: inherit; font-size: 13px; box-shadow: inset 0 0 0 1px var(--edge); }
     input[type=checkbox] { accent-color: var(--bone); }
-    .prog { height: 4px; border-radius: 2px; background: var(--hair); overflow: hidden; } .prog i { display: block; height: 100%; width: 0; background: var(--green); transition: width .2s; }
+    /* progress, in the ERP Dock's halftone: a dot-matrix track, bone dots for what's done, and while it runs a band of white
+       dots sweeping along it */
+    .prog { position: relative; height: 9px; margin-top: 4px; overflow: hidden; background: radial-gradient(circle, rgba(233,225,220,.13) 0 .8px, transparent 1.1px) 0 0 / 4px 9px; }
+    .prog i { position: absolute; inset: 0 auto 0 0; width: 0; background: radial-gradient(circle, var(--bone) 0 .9px, transparent 1.2px) 0 0 / 4px 9px; transition: width .5s var(--out); }
+    .prog.err i { background-image: radial-gradient(circle, var(--red) 0 .9px, transparent 1.2px); }
+    .prog.on::after { content: ""; position: absolute; inset: 0; background: radial-gradient(circle, #fff 0 1.4px, transparent 1.8px) 0 0 / 4px 9px;
+      -webkit-mask: linear-gradient(90deg, transparent calc(var(--od-p) - 18%), #000 calc(var(--od-p) - 4%), transparent var(--od-p));
+      mask: linear-gradient(90deg, transparent calc(var(--od-p) - 18%), #000 calc(var(--od-p) - 4%), transparent var(--od-p)); animation: od-sweep 1.6s var(--swap) infinite; }
+    @keyframes od-sweep { from { --od-p: 0%; } to { --od-p: 122%; } }
+    @media (prefers-reduced-motion: reduce) { .prog.on::after { animation: none; display: none; } }
     .msg { font-size: 12px; color: var(--muted); } .msg.err { color: var(--red); } .msg.ok { color: var(--green); }
     .empty { margin: 8px 10px; padding: 28px 12px; border-radius: 8px; text-align: center; color: var(--muted); font-size: 13px;
       background: radial-gradient(circle, rgba(233,225,220,.06) 0 1px, transparent 1.5px) 0 0 / 8px 8px; box-shadow: inset 0 0 0 1px var(--hair); }
@@ -577,6 +586,7 @@
   `;
   // the halftone wave animates a length, which only works on a registered property (and that can't be done inside a shadow root)
   try { CSS.registerProperty({ name: "--ht-w", syntax: "<length>", inherits: false, initialValue: "9000px" }); } catch {}
+  try { CSS.registerProperty({ name: "--od-p", syntax: "<percentage>", inherits: false, initialValue: "0%" }); } catch {}
   const ICON = {
     down: '<svg class="open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
     x: '<svg class="x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
@@ -732,7 +742,7 @@
       acts.append(btn("Copy URL", () => copy(it.url)), btn("Copy ffmpeg", () => copy(`ffmpeg -headers "Referer: ${it.referer || location.href}\\r\\n" -i "${it.url}" -c copy "${fileName(it, "mp4").replace(/\.\w+$/, "")}.mp4"`)));
       info.append(acts);
       if (job) {
-        const pr = mk("div", "prog"), bar = mk("i"); bar.style.width = `${Math.round((job.frac || 0) * 100)}%`; pr.append(bar);
+        const pr = mk("div", "prog" + (job.err ? " err" : job.done ? "" : " on")), bar = mk("i"); bar.style.width = `${Math.round((job.frac || 0) * 100)}%`; pr.append(bar);
         info.append(pr, mk("div", "msg" + (job.err ? " err" : job.done ? " ok" : ""), job.err || job.text || ""));
         job.bar = bar; job.row = info;
       }
