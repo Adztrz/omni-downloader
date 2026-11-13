@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.0.1
+// @version      1.1
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it.
 // @author       Adztrz
 // @homepageURL  https://github.com/Adztrz/omni-downloader
@@ -61,8 +61,11 @@
   const found = new Map(); // url → { url, kind, w, h, from, referer, title }
   const partOf = new Set(); // quality playlists of a master already listed: shown as its qualities, not as rows
   let onChange = () => {};
+  // players that fetch a file in byte ranges (Instagram, Facebook…) put the range in the address: drop it, so the pieces are
+  // one file and Save gets all of it ("#t=…" after an address is a start time, not another file, so it goes too)
+  const whole = (u) => { try { const x = new URL(u); let cut = !!x.hash && !/^data:/.test(u); x.hash = ""; for (const k of ["bytestart", "byteend", "range"]) if (x.searchParams.has(k)) { x.searchParams.delete(k); cut = true; } return cut ? x.href : u; } catch { return u; } };
   function add(url, kind, extra = {}) {
-    url = abs(url); if (!url) return;
+    url = abs(url); if (!url) return; url = whole(url);
     kind = kind || kindOf(url); if (!kind) return;
     if (kind !== "hls" && kind !== "dash" && SEGMENT.test(url)) return;
     if (/^data:/.test(url) && url.length < 3000) return; // tiny inline icons
@@ -329,6 +332,12 @@
     .row .t { color: #efefed; font-weight: 500; overflow-wrap: anywhere; }
     .row .u { font: 11px/1.5 "JetBrains Mono", ui-monospace, monospace; color: #8a8b8a; overflow-wrap: anywhere; max-height: 3em; overflow: hidden; }
     .row .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .row.m { grid-template-columns: 128px minmax(0, 1fr); gap: 10px; align-items: start; }
+    .row .info { display: grid; gap: 6px; min-width: 0; }
+    .th { position: relative; width: 128px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: #000; box-shadow: inset 0 0 0 1px #262727; cursor: pointer; }
+    .th video { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .th:empty::after, .th.none::after { content: attr(data-note); position: absolute; inset: 0; display: grid; place-items: center; color: #696a68; font-size: 11px; text-align: center; }
+    .th.none video { display: none; }
     .k { display: inline-block; padding: 0 6px; border-radius: 4px; background: #1a1d1e; color: #efefed; font: 11px/18px "JetBrains Mono", ui-monospace, monospace; }
     button.b { height: 30px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: #efefed; font: inherit; cursor: pointer; box-shadow: inset 0 0 0 1px #363738; }
     button.b:hover { box-shadow: inset 0 0 0 1px #696a68; } button.b:disabled { opacity: .4; cursor: default; }
@@ -449,23 +458,65 @@
       return;
     }
     for (const it of list) {
-      const row = mk("div", "row"), job = jobs.get(it.url);
-      const label = { hls: "HLS stream", dash: "DASH stream", video: "Video file", audio: "Audio file" }[it.kind] || it.kind;
-      row.append(mk("div", "t", `${label}${it.frame ? " · in a frame" : ""}${it.w ? ` · ${it.w}×${it.h}` : ""}`), mk("div", "u", it.url));
+      const row = mk("div", "row m"), info = mk("div", "info"), job = jobs.get(it.url);
+      row.append(thumb(it), info);
+      info.append(mk("div", "t", rowTitle(it)), mk("div", "u", it.url));
       const acts = mk("div", "acts");
       if (it.kind === "hls") hlsActs(it, acts, job);
       else if (it.kind === "dash") acts.append(mk("span", "msg", "DASH isn't saved here: copy the ffmpeg command."));
       else acts.append(btn("Save", async (e) => { const b = e.currentTarget; b.disabled = true; try { await saveDirect(it); b.textContent = "Saved"; } catch (x) { b.textContent = `Failed: ${x.message}`; } }, "b pri"));
       acts.append(btn("Copy URL", () => copy(it.url)), btn("Copy ffmpeg", () => copy(`ffmpeg -headers "Referer: ${it.referer || location.href}\\r\\n" -i "${it.url}" -c copy "${fileName(it, "mp4").replace(/\.\w+$/, "")}.mp4"`)));
-      row.append(acts);
+      info.append(acts);
       if (job) {
         const pr = mk("div", "prog"), bar = mk("i"); bar.style.width = `${Math.round((job.frac || 0) * 100)}%`; pr.append(bar);
-        row.append(pr, mk("div", "msg" + (job.err ? " err" : job.done ? " ok" : ""), job.err || job.text || ""));
-        job.bar = bar; job.row = row;
+        info.append(pr, mk("div", "msg" + (job.err ? " err" : job.done ? " ok" : ""), job.err || job.text || ""));
+        job.bar = bar; job.row = info;
       }
       nb.append(row);
     }
   }
+  // ---------- thumbnails ----------
+  // a file plays its own first frame (metadata only, so little is loaded); a stream gets one built from its first part at
+  // the lowest quality. Each element is made once and moved between redraws, so nothing reloads. Click to play / pause.
+  const clock = (d) => !isFinite(d) || !d ? "" : `${Math.floor(d / 60)}:${String(Math.round(d % 60)).padStart(2, "0")}`;
+  function rowTitle(it) {
+    const m = it.meta || {}, top = it.variants?.find((v) => v.res)?.res.split("x")[1];
+    const w = it.kind === "hls" ? 0 : m.w || it.w, h = it.kind === "hls" ? 0 : m.h || it.h, d = it.kind === "hls" ? it.dur : m.d;
+    const label = it.kind === "video" && m.loaded && !m.w ? "Sound only (video file)" : { hls: "HLS stream", dash: "DASH stream", video: "Video file", audio: "Audio file" }[it.kind] || it.kind;
+    return [label, it.frame && "in a frame", w && h && `${w}×${h}`, top && `up to ${top}p`, clock(d)].filter(Boolean).join(" · ");
+  }
+  function thumb(it) {
+    if (it.thumb) return it.thumb;
+    const box = mk("div", "th"); box.dataset.note = it.kind === "dash" ? "No preview" : "Loading…"; it.thumb = box;
+    box.onclick = () => { const v = box.querySelector("video"); if (v) v.paused ? v.play().catch(() => {}) : v.pause(); };
+    if (it.kind === "video" || it.kind === "audio") preview(it, it.url);
+    return box;
+  }
+  function preview(it, src) {
+    const v = mk("video"); v.muted = true; v.playsInline = true; v.loop = true; v.preload = "metadata";
+    v.src = /^blob:/.test(src) || src.includes("#") ? src : `${src}#t=0.5`;
+    v.onloadedmetadata = () => {
+      if (/^blob:/.test(src) && isFinite(v.duration)) v.currentTime = Math.min(2, v.duration / 2); // streams often open on black
+      it.meta = { ...(it.kind === "hls" ? {} : { d: v.duration }), w: v.videoWidth, h: v.videoHeight, loaded: true };
+      const t = it.thumb.nextSibling?.querySelector(".t"); if (t) t.textContent = rowTitle(it);
+      if (!v.videoWidth) { it.thumb.classList.add("none"); it.thumb.dataset.note = "Sound only"; }
+    };
+    v.onerror = () => { it.thumb.classList.add("none"); it.thumb.dataset.note = "No preview"; };
+    it.thumb.replaceChildren(v);
+  }
+  async function streamThumb(it) {
+    try {
+      const vids = it.variants.filter((v) => v.res || v.url === it.url), v = vids[vids.length - 1] || it.variants[0];
+      const media = parseMedia(await getRetry(v.url, "text", it.referer), v.url);
+      if (media.drm || !media.segs.length) throw 0;
+      const ctl = new AbortController(), seg = await decrypt(await getPart(media.segs[0], it.referer, ctl.signal), media.segs[0], it.referer, ctl.signal);
+      const blob = media.map ? new Blob([await getPart(media.map, it.referer, ctl.signal), seg], { type: "video/mp4" }) : tsToMp4([seg]);
+      if (!blob) throw 0;
+      if (!it.dur) it.dur = media.dur;
+      preview(it, URL.createObjectURL(blob));
+    } catch { it.thumb?.classList.add("none"); if (it.thumb) it.thumb.dataset.note = "No preview"; }
+  }
+
   // a stream's playlist, read once: its qualities (which then stop showing as rows of their own) and audio tracks
   function hlsLoad(it) {
     if (it.variants || it.loading || partOf.has(it.url)) return;
@@ -475,7 +526,8 @@
         const m = parseMaster(t, it.url);
         it.variants = m.variants.length ? m.variants : [{ url: it.url, res: "", bw: 0 }]; it.audioTracks = m.audio;
         for (const v of m.variants) if (v.url !== it.url) partOf.add(v.url);
-        if (!m.variants.length) { const md = parseMedia(t, it.url); it.info = `${md.segs.length} parts${md.dur ? ` · ${Math.round(md.dur / 60)} min` : ""}${md.live ? " · live (saves what's listed now)" : ""}${md.drm ? " · DRM" : ""}`; }
+        if (!m.variants.length) { const md = parseMedia(t, it.url); it.dur = md.dur; it.info = `${md.segs.length} parts${md.dur ? ` · ${Math.round(md.dur / 60)} min` : ""}${md.live ? " · live (saves what's listed now)" : ""}${md.drm ? " · DRM" : ""}`; }
+        thumb(it); streamThumb(it);
       }, (e) => { it.variants = []; it.err = e.message; }).finally(() => { it.loading = false; draw(); });
     }
   }
