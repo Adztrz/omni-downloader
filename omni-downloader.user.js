@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.3
+// @version      1.4
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it.
 // @author       Adztrz
 // @homepageURL  https://github.com/Adztrz/omni-downloader
@@ -622,7 +622,7 @@
     }
     for (const it of list) {
       const row = mk("div", "row m"), info = mk("div", "info"), job = jobs.get(it.url);
-      row.append(thumb(it), info);
+      row.append(thumb(it), info); sizeLoad(it);
       info.append(mk("div", "t", rowTitle(it)), mk("div", "u", it.url));
       const acts = mk("div", "acts");
       if (it.kind === "hls") hlsActs(it, acts, job);
@@ -642,11 +642,45 @@
   // a file plays its own first frame (metadata only, so little is loaded); a stream gets one built from its first part at
   // the lowest quality. Each element is made once and moved between redraws, so nothing reloads. Click to play / pause.
   const clock = (d) => !isFinite(d) || !d ? "" : `${Math.floor(d / 60)}:${String(Math.round(d % 60)).padStart(2, "0")}`;
+  // a file's size without downloading it: ask for its first byte and read the total from Content-Range (or the
+  // Content-Length of a full answer, cut off at the headers)
+  function headSize(url, referer) {
+    return new Promise((resolve) => {
+      let settled = false, req = null;
+      const finish = (status, h) => {
+        if (settled) return; settled = true; try { req?.abort(); } catch {}
+        const cr = /content-range:\s*bytes\s+\d+-\d+\/(\d+)/i.exec(h || ""), cl = /content-length:\s*(\d+)/i.exec(h || "");
+        resolve(cr ? +cr[1] : status === 200 && cl ? +cl[1] : null);
+      };
+      if (typeof GM_xmlhttpRequest === "function") {
+        req = GM_xmlhttpRequest({ method: "GET", url, headers: { Range: "bytes=0-0", ...(referer ? { Referer: referer } : {}) }, responseType: "arraybuffer", timeout: 15000,
+          onreadystatechange: (r) => { if (r.readyState >= 2 && r.responseHeaders) finish(r.status, r.responseHeaders); },
+          onload: (r) => finish(r.status, r.responseHeaders), onerror: () => finish(0, ""), ontimeout: () => finish(0, "") });
+        return;
+      }
+      fetch(url, { headers: { Range: "bytes=0-0" }, credentials: new URL(url, location.href).origin === location.origin ? "include" : "omit" })
+        .then((r) => { finish(r.status, [...r.headers].map(([k, v]) => `${k}: ${v}`).join("\n")); r.body?.cancel().catch(() => {}); }, () => finish(0, ""));
+    });
+  }
+  const bytes = (n) => n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e7 ? `${Math.round(n / 1e6)} MB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
+  function sizeLoad(it) {
+    if (it.sizeP || !/^https?:/.test(it.url) || it.kind === "hls" || it.kind === "dash") return;
+    it.sizeP = headSize(it.url, it.referer).then((n) => { it.size = n; retitle(it); for (const x of found.values()) if (x !== it && x.size && sameAsset(x, it)) retitle(x); });
+  }
+  const sameAsset = (a, b) => { const k = assetKey(a.url); return !!k && k === assetKey(b.url); };
+  // a picture-only file is saved with its sound: count that too when the sound file is known
+  function sizeText(it) {
+    if (!it.size) return "";
+    const pictureOnly = it.kind === "video" && it.meta?.loaded && it.meta.w;
+    const sound = pictureOnly && [...found.values()].find((x) => x !== it && x.meta?.loaded && !x.meta.w && x.size && sameAsset(x, it));
+    return sound ? `≈ ${bytes(it.size + sound.size)} with sound` : `≈ ${bytes(it.size)}`;
+  }
+  const retitle = (it) => { const t = it.thumb?.nextSibling?.querySelector(".t"); if (t) t.textContent = rowTitle(it); };
   function rowTitle(it) {
     const m = it.meta || {}, top = it.variants?.find((v) => v.res)?.res.split("x")[1];
     const w = it.kind === "hls" ? 0 : m.w || it.w, h = it.kind === "hls" ? 0 : m.h || it.h, d = it.kind === "hls" ? it.dur : m.d;
     const label = it.kind === "video" && m.loaded && !m.w ? "Sound only (video file)" : { hls: "HLS stream", dash: "DASH stream", video: "Video file", audio: "Audio file" }[it.kind] || it.kind;
-    return [label, it.frame && "in a frame", w && h && `${w}×${h}`, top && `up to ${top}p`, clock(d)].filter(Boolean).join(" · ");
+    return [label, it.frame && "in a frame", w && h && `${w}×${h}`, top && `up to ${top}p`, clock(d), sizeText(it)].filter(Boolean).join(" · ");
   }
   function thumb(it) {
     if (it.thumb) return it.thumb;
@@ -661,7 +695,7 @@
     v.onloadedmetadata = () => {
       if (/^blob:/.test(src) && isFinite(v.duration)) v.currentTime = Math.min(2, v.duration / 2); // streams often open on black
       it.meta = { ...(it.kind === "hls" ? {} : { d: v.duration }), w: v.videoWidth, h: v.videoHeight, loaded: true };
-      const t = it.thumb.nextSibling?.querySelector(".t"); if (t) t.textContent = rowTitle(it);
+      retitle(it); for (const x of found.values()) if (x !== it && sameAsset(x, it)) retitle(x);
       if (!v.videoWidth) { it.thumb.classList.add("none"); it.thumb.dataset.note = "Sound only"; }
     };
     v.onerror = () => { it.thumb.classList.add("none"); it.thumb.dataset.note = "No preview"; };
@@ -675,7 +709,7 @@
       const ctl = new AbortController(), seg = await decrypt(await getPart(media.segs[0], it.referer, ctl.signal), media.segs[0], it.referer, ctl.signal);
       const blob = media.map ? new Blob([await getPart(media.map, it.referer, ctl.signal), seg], { type: "video/mp4" }) : tsToMp4([seg]);
       if (!blob) throw 0;
-      if (!it.dur) it.dur = media.dur;
+      if (!it.dur) { it.dur = media.dur; onChange(); } // the qualities' sizes can be estimated now
       preview(it, URL.createObjectURL(blob));
     } catch { it.thumb?.classList.add("none"); if (it.thumb) it.thumb.dataset.note = "No preview"; }
   }
@@ -700,7 +734,8 @@
     if (it.err) return acts.append(mk("span", "msg err", `Playlist unreadable: ${it.err}`));
     if (!it.variants) return acts.append(mk("span", "msg", "Reading the playlist…"));
     const s = mk("select"); s.setAttribute("aria-label", "Quality");
-    const mbps = (v) => v.bw ? ` · ${(v.bw / 1e6).toFixed(1)} Mb/s` : "";
+    // a stream's size is only known by fetching it: estimate it from the quality's bitrate and the length
+    const mbps = (v) => v.bw ? ` · ${(v.bw / 1e6).toFixed(1)} Mb/s${it.dur ? ` · ≈ ${bytes(v.bw * it.dur / 8)}` : ""}` : "";
     it.variants.forEach((v, i) => s.append(new Option(v.res ? `${v.res.split("x")[1]}p${mbps(v)}` : v.url === it.url ? it.info || "Single quality"
       : v.codecs && !/avc|hvc|hev|vp0?9|av01/i.test(v.codecs) ? `Sound only${mbps(v)}` : `Quality ${i + 1}${mbps(v)}`, String(i), false, i === (it.pick || 0))));
     s.onchange = () => { it.pick = +s.value; };

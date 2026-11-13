@@ -6,7 +6,7 @@ Press **Alt+D**, or the small ⬇ button at the bottom right (it can be hidden f
 
 ## What it does
 
-- **Video** (each with a thumbnail; click it to play)
+- **Video** (each with a thumbnail you can click to play, and its size: a file's real size, read from the server without downloading it and counting its sound file when the two are saved together; a stream's estimate per quality, from its bitrate and length)
   - HLS streams come with a quality picker. **Save video** fetches the parts 6 at a time (3 tries each) and joins them into one **MP4**; tick *keep .ts* to skip converting.
   - Streams encrypted with plain AES-128 are decrypted with the playlist's own key, as the player does.
   - Direct video files save as they are. Sites that load one file in byte-range pieces (Instagram, Facebook) show it as one row, and Save gets the whole file.
