@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.5
+// @version      1.6
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it.
 // @author       Adztrz
 // @homepageURL  https://github.com/Adztrz/omni-downloader
@@ -218,7 +218,8 @@
   async function saveVideo(it, name) {
     const V = new Uint8Array(await getRetry(it.url, "buffer", it.referer)), vi = mp4Info(V);
     const has = (info, h) => !!info?.traks.some((t) => t.handler === h);
-    if (!has(vi, "vide") || has(vi, "soun")) { saveBlob(new Blob([V], { type: "video/mp4" }), name); return vi && !has(vi, "vide") && has(vi, "soun") ? "Saved (this one is the sound)" : ""; }
+    if (vi && !has(vi, "vide") && has(vi, "soun")) { saveBlob(new Blob([V], { type: "audio/mp4" }), name.replace(/\.\w+$/, "") + ".m4a"); return "Saved (sound only)"; }
+    if (!has(vi, "vide") || has(vi, "soun")) { saveBlob(new Blob([V], { type: "video/mp4" }), name); return ""; }
     const pair = await soundFor(it);
     if (pair) {
       try {
@@ -564,10 +565,19 @@
   const picked = new Set(), jobs = new Map(); // url → { ctl, frac, text, err, done }
   const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const btn = (t, run, cls = "b") => { const b = mk("button", cls, t); b.type = "button"; b.onclick = run; return b; };
+  // a "video" file that turned out to have no picture (DASH sites name their sound files .mp4 / .m4s) is a sound track
+  const soundOnly = (it) => it.kind === "video" && !!it.meta?.loaded && !it.meta.w;
+  // look inside every video file once (metadata only, one at a time), so sound tracks move to the Audio tab before you see them
+  let probing = Promise.resolve();
+  function probeAll() {
+    for (const it of found.values()) if (it.kind === "video" && !it.meta && !it.probing && !partOf.has(it.url) && /^https?:/.test(it.url)) {
+      it.probing = true; probing = probing.then(() => probe(it)).then(() => { if (soundOnly(it)) onChange(); });
+    }
+  }
   const groups = () => {
     const g = { video: [], image: [], audio: [] };
     const q = fold(query);
-    for (const it of found.values()) if (!partOf.has(it.url) && (!q || fold(`${it.url} ${it.title || ""}`).includes(q))) (it.kind === "image" ? g.image : it.kind === "audio" ? g.audio : g.video).push(it);
+    for (const it of found.values()) if (!partOf.has(it.url) && (!q || fold(`${it.url} ${it.title || ""}`).includes(q))) (it.kind === "image" ? g.image : it.kind === "audio" || soundOnly(it) ? g.audio : g.video).push(it);
     g.video.sort((a, b) => (b.kind === "hls") - (a.kind === "hls") || (b.kind === "video") - (a.kind === "video"));
     return g;
   };
@@ -616,6 +626,7 @@
   function draw() {
     if (!panel) return;
     for (const it of found.values()) if (it.kind === "hls") hlsLoad(it);
+    probeAll();
     const g = groups(), body = main.querySelector(".body"), keep = body ? body.scrollTop : 0;
     main.replaceChildren();
     const tabs = mk("div", "tabs");
@@ -690,6 +701,7 @@
       const row = mk("div", "row m"), info = mk("div", "info"), job = jobs.get(it.url);
       row.append(thumb(it), info); sizeLoad(it);
       info.append(mk("div", "t", rowTitle(it)), mk("div", "u", it.url));
+      if (soundOnly(it)) info.append(mk("div", "msg", "Saving its video joins this sound in; save it here for the sound alone."));
       const acts = mk("div", "acts");
       if (it.kind === "hls") hlsActs(it, acts, job);
       else if (it.kind === "dash") acts.append(mk("span", "msg", "DASH isn't saved here: copy the ffmpeg command."));
@@ -745,7 +757,7 @@
   function rowTitle(it) {
     const m = it.meta || {}, top = it.variants?.find((v) => v.res)?.res.split("x")[1];
     const w = it.kind === "hls" ? 0 : m.w || it.w, h = it.kind === "hls" ? 0 : m.h || it.h, d = it.kind === "hls" ? it.dur : m.d;
-    const label = it.kind === "video" && m.loaded && !m.w ? "Sound only (video file)" : { hls: "HLS stream", dash: "DASH stream", video: "Video file", audio: "Audio file" }[it.kind] || it.kind;
+    const label = soundOnly(it) ? "Sound track" : { hls: "HLS stream", dash: "DASH stream", video: "Video file", audio: "Audio file" }[it.kind] || it.kind;
     return [label, it.frame && "in a frame", w && h && `${w}×${h}`, top && `up to ${top}p`, clock(d), sizeText(it)].filter(Boolean).join(" · ");
   }
   function thumb(it) {
