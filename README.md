@@ -9,7 +9,8 @@ Press **Alt+D**, or the small ⬇ button at the bottom right (it can be hidden f
 - **Video** (each with a thumbnail; click it to play)
   - HLS streams come with a quality picker. **Save video** fetches the parts 6 at a time (3 tries each) and joins them into one **MP4**; tick *keep .ts* to skip converting.
   - Streams encrypted with plain AES-128 are decrypted with the playlist's own key, as the player does.
-  - Direct video files save as they are. Sites that load one file in byte-range pieces (Instagram, Facebook) show it as one row, and Save gets the whole file; there the picture and the sound are often separate files, and a sound-only one is labelled.
+  - Direct video files save as they are. Sites that load one file in byte-range pieces (Instagram, Facebook) show it as one row, and Save gets the whole file.
+  - Where the picture and the sound are separate files (Instagram, Facebook and other DASH players), **Save** on the picture finds its sound file (the same Instagram asset id, else the same length) and joins the two into one MP4, without re-encoding. If the sound hasn't loaded yet, play the video for a moment and save again. A sound-only file is labelled, and saves on its own as it is.
 - **Images**: a grid of every image, including the largest `srcset` entry, `<picture>` sources, CSS backgrounds, posters and `og:image`. Hide the small ones by size, pick some, then save them as a **ZIP** or one by one. Double-click an image to save just that one.
 - **Audio**: audio files, and the separate sound tracks some HLS streams have.
 - **Copy URL** and **Copy ffmpeg** on every stream and file, for anything better done outside the browser.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.1
+// @version      1.2
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it.
 // @author       Adztrz
 // @homepageURL  https://github.com/Adztrz/omni-downloader
@@ -188,9 +188,11 @@
     return clean(last);
   }
   // one direct file: Tampermonkey's own download (cross-origin, keeps the name), else fetch and save
+  // returns a note for the Save button, if there's something to say
   async function saveDirect(it) {
     if (it.hlsAudio || EXT.hls.test(it.url)) return saveHlsAudio(it);
     const name = fileName(it, it.kind === "image" ? "jpg" : it.kind === "audio" ? "mp3" : "mp4");
+    if (it.kind === "video" && /^https?:/.test(it.url)) return saveVideo(it, name);
     if (typeof GM_download === "function" && /^https?:/.test(it.url)) {
       try {
         await new Promise((resolve, reject) => GM_download({ url: it.url, name, headers: { Referer: it.referer || location.href }, onload: resolve, onerror: (e) => reject(new Error(e?.error || "download failed")), ontimeout: () => reject(new Error("timed out")) }));
@@ -198,6 +200,159 @@
       } catch (e) { if (!/not_whitelisted|not_enabled|not_permitted/i.test(String(e.message))) throw e; } // file type not allowed in Tampermonkey's settings: save it ourselves
     }
     saveBlob(new Blob([await getRetry(it.url, "buffer", it.referer)]), name);
+  }
+
+  // ---------- picture and sound in separate files (Instagram, Facebook and other DASH players) ----------
+  // Such a site keeps a video's picture in one MP4 and its sound in another, and its player plays both. Save fetches the
+  // picture file, and when it has no sound track, finds the sound file that goes with it (the same asset id in Instagram's
+  // efg parameter, else the same length) and joins the two into one MP4 with both tracks. Nothing is re-encoded: the boxes
+  // are copied and only track numbers, timescales and offsets are rewritten. Fragmented MP4 (what DASH serves) and plain
+  // MP4 with one mdat are both handled; anything else is saved as it came.
+  async function saveVideo(it, name) {
+    const V = new Uint8Array(await getRetry(it.url, "buffer", it.referer)), vi = mp4Info(V);
+    const has = (info, h) => !!info?.traks.some((t) => t.handler === h);
+    if (!has(vi, "vide") || has(vi, "soun")) { saveBlob(new Blob([V], { type: "video/mp4" }), name); return vi && !has(vi, "vide") && has(vi, "soun") ? "Saved (this one is the sound)" : ""; }
+    const pair = await soundFor(it);
+    if (pair) {
+      try {
+        const A = new Uint8Array(await getRetry(pair.url, "buffer", pair.referer || it.referer)), ai = mp4Info(A);
+        if (has(ai, "soun") && !has(ai, "vide") && ai.frag === vi.frag) {
+          saveBlob(new Blob(vi.frag ? joinFragmented(V, vi, A, ai) : joinPlain(V, vi, A, ai), { type: "video/mp4" }), name);
+          return "Saved with sound";
+        }
+      } catch (e) { console.warn("[omni] joining picture and sound failed:", e); }
+    }
+    saveBlob(new Blob([V], { type: "video/mp4" }), name);
+    return pair ? "Saved without sound (couldn't join)" : "Saved without sound: play the video so its sound loads, then save again";
+  }
+  // the sound file for a picture-only file: same Instagram asset id, else the closest length (within a second)
+  const assetKey = (u) => {
+    try {
+      const e = new URL(u).searchParams.get("efg"); if (!e) return "";
+      const j = JSON.parse(atob(e.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(e.length / 4) * 4, "=")));
+      return String(j.xpv_asset_id ?? j.asset_id ?? j.video_id ?? "");
+    } catch { return ""; }
+  };
+  function probe(it) {
+    if (it.meta?.loaded) return Promise.resolve(it.meta);
+    return new Promise((resolve) => {
+      const v = document.createElement("video"); v.muted = true; v.preload = "metadata";
+      const done = () => { clearTimeout(t); it.meta = { w: v.videoWidth, h: v.videoHeight, d: v.duration, loaded: !!v.duration }; v.removeAttribute("src"); v.load(); resolve(it.meta); };
+      const t = setTimeout(done, 8000); v.onloadedmetadata = done; v.onerror = done; v.src = it.url;
+    });
+  }
+  async function soundFor(it) {
+    const key = assetKey(it.url), others = [...found.values()].filter((x) => x !== it && (x.kind === "video" || x.kind === "audio") && /^https?:/.test(x.url));
+    const same = key ? others.filter((x) => assetKey(x.url) === key) : [];
+    const pool = (same.length ? same : others).slice(0, 40), me = await probe(it);
+    const sound = [];
+    for (const x of pool) { const m = await probe(x); if (m.loaded && !m.w) sound.push({ x, gap: Math.abs((m.d || 0) - (me.d || 0)) }); }
+    sound.sort((a, b) => a.gap - b.gap);
+    return sound.length && (same.length || sound[0].gap < 1) ? sound[0].x : null;
+  }
+
+  // MP4 boxes: [size][type][body], size 1 = 64-bit size follows, 0 = to the end
+  const t4 = (u, o) => String.fromCharCode(u[o], u[o + 1], u[o + 2], u[o + 3]);
+  const dv = (u) => new DataView(u.buffer, u.byteOffset, u.byteLength);
+  function boxes(u, start = 0, end = u.length) {
+    const d = dv(u), out = [];
+    for (let o = start; o + 8 <= end;) {
+      let size = d.getUint32(o), hdr = 8;
+      if (size === 1) { size = Number(d.getBigUint64(o + 8)); hdr = 16; } else if (size === 0) size = end - o;
+      if (size < hdr || o + size > end) break;
+      out.push({ type: t4(u, o + 4), start: o, end: o + size, body: o + hdr }); o += size;
+    }
+    return out;
+  }
+  const kids = (u, b) => boxes(u, b.body, b.end);
+  const find = (u, b, path) => { let c = b; for (const t of path.split("/")) { c = c && kids(u, c).find((x) => x.type === t); } return c || null; };
+  const box = (type, parts) => {
+    const n = 8 + parts.reduce((a, p) => a + p.length, 0), out = new Uint8Array(n);
+    dv(out).setUint32(0, n); for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+    let o = 8; for (const p of parts) { out.set(p, o); o += p.length; } return out;
+  };
+  const getN = (d, o, wide) => wide ? Number(d.getBigUint64(o)) : d.getUint32(o);
+  const setN = (d, o, wide, v) => wide ? d.setBigUint64(o, BigInt(Math.round(v))) : d.setUint32(o, Math.round(v));
+  function mp4Info(u) {
+    const top = boxes(u), moov = top.find((b) => b.type === "moov"); if (!moov) return null;
+    const traks = kids(u, moov).filter((b) => b.type === "trak").map((t) => { const h = find(u, t, "mdia/hdlr"); return { box: t, handler: h ? t4(u, h.body + 8) : "" }; });
+    return { top, moov, traks, frag: !!find(u, moov, "mvex") };
+  }
+  const mvhdScale = (u, moov) => { const m = find(u, moov, "mvhd"); return dv(u).getUint32(m.body + 4 + (u[m.body] ? 16 : 8)); };
+  // the sound trak, copied: its track number changed, and its movie-timescale durations moved to the picture file's timescale
+  function soundTrak(A, ai, id, scale) {
+    const t = ai.traks.find((x) => x.handler === "soun").box, c = A.slice(t.start, t.end), d = dv(c), root = boxes(c)[0];
+    const tk = find(c, root, "tkhd"), v1 = c[tk.body] === 1;
+    d.setUint32(tk.body + 4 + (v1 ? 16 : 8), id);
+    const durAt = tk.body + 4 + (v1 ? 16 : 8) + 8; setN(d, durAt, v1, getN(d, durAt, v1) * scale);
+    const el = find(c, root, "edts/elst");
+    if (el) { const w = c[el.body] === 1, n = d.getUint32(el.body + 4); for (let i = 0, o = el.body + 8; i < n; i++, o += w ? 20 : 12) setN(d, o, w, getN(d, o, w) * scale); }
+    return c;
+  }
+  // the picture file's mvhd with next_track_ID past the sound's, and its duration the longer of the two
+  function newMvhd(V, vi, id, aDur) {
+    const m = find(V, vi.moov, "mvhd"), c = V.slice(m.start, m.end), d = dv(c), v1 = c[8] === 1;
+    d.setUint32(8 + (v1 ? 108 : 96), id + 1);
+    const durAt = 8 + 4 + (v1 ? 16 : 8) + 4; if (aDur > getN(d, durAt, v1)) setN(d, durAt, v1, aDur);
+    return c;
+  }
+  const trackId = (u, trak) => { const tk = find(u, trak, "tkhd"); return dv(u).getUint32(tk.body + 4 + (u[tk.body] ? 16 : 8)); };
+  const mdhdScale = (u, trak) => { const m = find(u, trak, "mdia/mdhd"); return dv(u).getUint32(m.body + 4 + (u[m.body] ? 16 : 8)); };
+  const soundDur = (A, ai) => { const m = find(A, ai.moov, "mvhd"), v1 = A[m.body] === 1; return getN(dv(A), m.body + 4 + (v1 ? 16 : 8) + 4, v1); };
+  function joinFragmented(V, vi, A, ai) {
+    const id = Math.max(...vi.traks.map((t) => trackId(V, t.box))) + 1, scale = mvhdScale(V, vi.moov) / mvhdScale(A, ai.moov);
+    const aTrak = ai.traks.find((x) => x.handler === "soun").box, aOld = trackId(A, aTrak);
+    const ts = { v: Object.fromEntries(vi.traks.map((t) => [trackId(V, t.box), mdhdScale(V, t.box)])), a: mdhdScale(A, aTrak) };
+    const mvex = find(V, vi.moov, "mvex"), aTrex = kids(A, find(A, ai.moov, "mvex")).find((b) => b.type === "trex" && dv(A).getUint32(b.body + 4) === aOld);
+    const trex = A.slice(aTrex.start, aTrex.end); dv(trex).setUint32(12, id);
+    const moov = box("moov", [newMvhd(V, vi, id, soundDur(A, ai) * scale),
+      ...kids(V, vi.moov).filter((b) => b.type !== "mvhd" && b.type !== "mvex").map((b) => V.subarray(b.start, b.end)),
+      soundTrak(A, ai, id, scale), box("mvex", [...kids(V, mvex).map((b) => V.subarray(b.start, b.end)), trex])]);
+    // each moof with the mdat(s) after it, timed by its tfdt, so picture and sound fragments interleave by time
+    const frags = (u, info, sound) => {
+      const out = []; let cur = null;
+      for (const b of info.top) {
+        if (b.type === "moof") {
+          const traf = find(u, b, "traf"), tfdt = traf && find(u, traf, "tfdt"), tid = traf ? dv(u).getUint32(find(u, traf, "tfhd").body + 4) : 0;
+          const t = tfdt ? getN(dv(u), tfdt.body + 4, u[tfdt.body] === 1) / (sound ? ts.a : ts.v[tid] || 1) : out.length;
+          out.push(cur = { u, moof: b, mdats: [], t, sound });
+        } else if (b.type === "mdat" && cur) cur.mdats.push(b);
+      }
+      return out;
+    };
+    const all = [...frags(V, vi, false), ...frags(A, ai, true)].sort((x, y) => x.t - y.t || x.sound - y.sound);
+    const ftyp = vi.top.find((b) => b.type === "ftyp"), parts = [ftyp ? V.subarray(ftyp.start, ftyp.end) : box("ftyp", [new TextEncoder().encode("isom"), new Uint8Array(4), new TextEncoder().encode("isomiso6mp41")]), moov];
+    let pos = parts.reduce((a, p) => a + p.length, 0), seq = 0;
+    for (const f of all) {
+      const m = f.u.slice(f.moof.start, f.moof.end), d = dv(m), root = boxes(m)[0];
+      d.setUint32(find(m, root, "mfhd").body + 4, ++seq);
+      for (const traf of kids(m, root).filter((b) => b.type === "traf")) {
+        const tf = find(m, traf, "tfhd"), flags = d.getUint32(tf.body) & 0xffffff;
+        if (f.sound) d.setUint32(tf.body + 4, id);
+        if (flags & 1) setN(d, tf.body + 8, true, getN(d, tf.body + 8, true) - f.moof.start + pos); // absolute offsets move with the fragment
+      }
+      parts.push(m); pos += m.length;
+      for (const b of f.mdats) { parts.push(f.u.subarray(b.start, b.end)); pos += b.end - b.start; }
+    }
+    return parts;
+  }
+  function joinPlain(V, vi, A, ai) {
+    const vm = vi.top.filter((b) => b.type === "mdat"), am = ai.top.filter((b) => b.type === "mdat");
+    if (vm.length !== 1 || am.length !== 1) throw new Error("more than one mdat");
+    const id = Math.max(...vi.traks.map((t) => trackId(V, t.box))) + 1, scale = mvhdScale(V, vi.moov) / mvhdScale(A, ai.moov);
+    const ftyp = vi.top.find((b) => b.type === "ftyp"), head = ftyp ? V.subarray(ftyp.start, ftyp.end) : new Uint8Array(0);
+    const moov = box("moov", [newMvhd(V, vi, id, soundDur(A, ai) * scale), ...kids(V, vi.moov).filter((b) => b.type !== "mvhd").map((b) => V.slice(b.start, b.end)), soundTrak(A, ai, id, scale)]);
+    // chunk offsets point into each file's mdat: move them to where that mdat now sits
+    const vAt = head.length + moov.length, aAt = vAt + (vm[0].end - vm[0].start), d = dv(moov), root = boxes(moov)[0];
+    kids(moov, root).filter((b) => b.type === "trak").forEach((t, i) => {
+      const delta = i < vi.traks.length ? vAt - vm[0].start : aAt - am[0].start;
+      for (const name of ["stco", "co64"]) {
+        const c = find(moov, t, `mdia/minf/stbl/${name}`); if (!c) continue;
+        const wide = name === "co64", n = d.getUint32(c.body + 4);
+        for (let k = 0, o = c.body + 8; k < n; k++, o += wide ? 8 : 4) setN(d, o, wide, getN(d, o, wide) + delta);
+      }
+    });
+    return [head, moov, V.subarray(vm[0].start, vm[0].end), A.subarray(am[0].start, am[0].end)];
   }
 
   // ---------- HLS ----------
@@ -464,7 +619,7 @@
       const acts = mk("div", "acts");
       if (it.kind === "hls") hlsActs(it, acts, job);
       else if (it.kind === "dash") acts.append(mk("span", "msg", "DASH isn't saved here: copy the ffmpeg command."));
-      else acts.append(btn("Save", async (e) => { const b = e.currentTarget; b.disabled = true; try { await saveDirect(it); b.textContent = "Saved"; } catch (x) { b.textContent = `Failed: ${x.message}`; } }, "b pri"));
+      else acts.append(btn("Save", async (e) => { const b = e.currentTarget; b.disabled = true; b.textContent = "Saving…"; try { b.textContent = (await saveDirect(it)) || "Saved"; } catch (x) { b.textContent = `Failed: ${x.message}`; } }, "b pri"));
       acts.append(btn("Copy URL", () => copy(it.url)), btn("Copy ffmpeg", () => copy(`ffmpeg -headers "Referer: ${it.referer || location.href}\\r\\n" -i "${it.url}" -c copy "${fileName(it, "mp4").replace(/\.\w+$/, "")}.mp4"`)));
       info.append(acts);
       if (job) {
