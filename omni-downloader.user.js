@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.2
+// @version      1.3
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it.
 // @author       Adztrz
 // @homepageURL  https://github.com/Adztrz/omni-downloader
@@ -54,7 +54,10 @@
     dash: /\.mpd(?:$|[?#])/i,
   };
   const SEGMENT = /\.(ts|m4s|aac|vtt|webvtt|key)(?:$|[?#])|\/seg[-_]?\d|[?&](?:range|bytes)=/i; // pieces of a stream, not files
-  const kindOf = (url) => EXT.hls.test(url) ? "hls" : EXT.dash.test(url) ? "dash" : EXT.video.test(url) ? "video" : EXT.audio.test(url) ? "audio" : EXT.image.test(url) ? "image" : null;
+  // Bilibili serves each video's picture and sound as two whole fMP4 files named .m4s under /upgcxcode/ (fetched in Range
+  // pieces): files, not stream segments
+  const BILI = /\/upgcxcode\/.+\.m4s(?:$|[?#])/i;
+  const kindOf = (url) => BILI.test(url) ? "video" : EXT.hls.test(url) ? "hls" : EXT.dash.test(url) ? "dash" : EXT.video.test(url) ? "video" : EXT.audio.test(url) ? "audio" : EXT.image.test(url) ? "image" : null;
   const abs = (u, base = location.href) => { try { const x = new URL(u, base); return /^(https?|blob|data):$/.test(x.protocol) ? x.href : null; } catch { return null; } };
 
   // ---------- the list (each frame keeps its own; frames send theirs to the top) ----------
@@ -67,7 +70,7 @@
   function add(url, kind, extra = {}) {
     url = abs(url); if (!url) return; url = whole(url);
     kind = kind || kindOf(url); if (!kind) return;
-    if (kind !== "hls" && kind !== "dash" && SEGMENT.test(url)) return;
+    if (kind !== "hls" && kind !== "dash" && SEGMENT.test(url) && !BILI.test(url)) return;
     if (/^data:/.test(url) && url.length < 3000) return; // tiny inline icons
     const old = found.get(url), item = { url, kind, referer: location.href, title: document.title, ...old, ...extra };
     if (old && old.kind !== "image" && kind === "image") item.kind = old.kind; // a poster stays a poster only if nothing better
@@ -192,7 +195,7 @@
   async function saveDirect(it) {
     if (it.hlsAudio || EXT.hls.test(it.url)) return saveHlsAudio(it);
     const name = fileName(it, it.kind === "image" ? "jpg" : it.kind === "audio" ? "mp3" : "mp4");
-    if (it.kind === "video" && /^https?:/.test(it.url)) return saveVideo(it, name);
+    if (it.kind === "video" && /^https?:/.test(it.url)) return saveVideo(it, BILI.test(it.url) ? `${clean(it.title || document.title)}.mp4` : name);
     if (typeof GM_download === "function" && /^https?:/.test(it.url)) {
       try {
         await new Promise((resolve, reject) => GM_download({ url: it.url, name, headers: { Referer: it.referer || location.href }, onload: resolve, onerror: (e) => reject(new Error(e?.error || "download failed")), ontimeout: () => reject(new Error("timed out")) }));
@@ -225,9 +228,10 @@
     saveBlob(new Blob([V], { type: "video/mp4" }), name);
     return pair ? "Saved without sound (couldn't join)" : "Saved without sound: play the video so its sound loads, then save again";
   }
-  // the sound file for a picture-only file: same Instagram asset id, else the closest length (within a second)
+  // the sound file for a picture-only file: same Instagram asset id or Bilibili cid, else the closest length (within a second)
   const assetKey = (u) => {
     try {
+      const bili = BILI.test(u) && /\/upgcxcode\/\d+\/\d+\/(\d+)\//.exec(u); if (bili) return `bili:${bili[1]}`;
       const e = new URL(u).searchParams.get("efg"); if (!e) return "";
       const j = JSON.parse(atob(e.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(e.length / 4) * 4, "=")));
       return String(j.xpv_asset_id ?? j.asset_id ?? j.video_id ?? "");
