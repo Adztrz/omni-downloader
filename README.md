@@ -26,7 +26,9 @@ The whole video is put together in memory before saving, so very long high-quali
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/).
-2. Tampermonkey → Dashboard → **+**, replace everything with [`omni-downloader.user.js`](omni-downloader.user.js), Ctrl+S.
+2. Open [the raw script](https://raw.githubusercontent.com/Adztrz/omni-downloader/master/omni-downloader.user.js): Tampermonkey offers to install it, and keeps it up to date from here.
+
+Or by hand: Tampermonkey → Dashboard → **+**, replace everything with [`omni-downloader.user.js`](omni-downloader.user.js), Ctrl+S.
 
 To save video and audio files directly, Tampermonkey may need them allowed in Settings → Downloads (*Whitelisted file extensions*). If it refuses, the script fetches the file and saves it itself.
 

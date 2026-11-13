@@ -1,9 +1,12 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.0
+// @version      1.0.1
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it.
 // @author       Adztrz
+// @homepageURL  https://github.com/Adztrz/omni-downloader
+// @updateURL    https://raw.githubusercontent.com/Adztrz/omni-downloader/master/omni-downloader.user.js
+// @downloadURL  https://raw.githubusercontent.com/Adztrz/omni-downloader/master/omni-downloader.user.js
 // @match        *://*/*
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
