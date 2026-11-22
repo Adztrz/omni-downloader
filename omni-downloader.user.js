@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.13.2
+// @version      1.13.3
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -148,6 +148,16 @@
     const item = { url, kind: "yt", ytId: id, shorts, referer: url, title };
     found.set(url, item); changed(item);
   }
+  // every video and audio element, including those inside players' open shadow DOM (Reddit's shreddit-player and other
+  // web-component players keep theirs there, out of reach of a plain querySelectorAll). Kept for a second, since the
+  // button under videos asks on every pointer move.
+  let mediaCache = null, mediaAt0 = 0;
+  function allMedia() {
+    if (mediaCache && performance.now() - mediaAt0 < 1000) return mediaCache;
+    const out = [], walk = (r) => { for (const e of r.querySelectorAll("*")) { if (e.tagName === "VIDEO" || e.tagName === "AUDIO") out.push(e); if (e.shadowRoot) walk(e.shadowRoot); } };
+    try { walk(document); } catch {}
+    mediaAt0 = performance.now(); return (mediaCache = out);
+  }
   function scan() {
     const d = document;
     youTube();
@@ -156,7 +166,7 @@
       if (u) add(u, "image", { w: img.naturalWidth, h: img.naturalHeight });
     }
     for (const s of d.querySelectorAll("picture source[srcset]")) { const u = bestSrcset(s.srcset); if (u) add(u, "image"); }
-    for (const m of d.querySelectorAll("video, audio")) {
+    for (const m of allMedia()) {
       const kind = m.tagName === "VIDEO" ? "video" : "audio";
       for (const u of [m.currentSrc, m.src, ...[...m.querySelectorAll("source")].map((s) => s.src)]) {
         if (!u || /^blob:/.test(u)) continue; // a blob: is a player feeding a stream; the stream is in the network list
@@ -180,7 +190,7 @@
   if (!TOP) {
     const go = () => { try { scan(); } catch {} };
     if (document.readyState === "complete") setTimeout(go, 500); else window.addEventListener("load", () => setTimeout(go, 500));
-    setInterval(() => { if (document.querySelector("video, audio")) go(); }, 5000);
+    setInterval(() => { if (allMedia().length) go(); }, 5000);
     return; // frames have no panel of their own
   }
 
@@ -1199,7 +1209,7 @@
   }
   // the page's player for an item: the one Omni matches to it, else the one playing, else the biggest on screen
   function playerFor(it) {
-    const vs = [...document.querySelectorAll("video, audio")].filter((v) => v.duration);
+    const vs = allMedia().filter((v) => v.duration);
     return vs.find((v) => itemFor(v) === it) || vs.find((v) => !v.paused) || vs.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0] || null;
   }
   function openTrim(it) {
@@ -1426,7 +1436,8 @@
   let pill = null, pillFor = null, pillHide = 0, pillRaf = 0;
   const pillOn = () => store.get("pill", true);
   function mediaAt(x, y) {
-    for (const v of document.querySelectorAll("video, audio[controls]")) {
+    for (const v of allMedia()) {
+      if (v.tagName === "AUDIO" && !v.controls) continue;
       const r = v.getBoundingClientRect();
       if (r.width < 200 || r.height < 30 || getComputedStyle(v).visibility === "hidden") continue;
       if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom + 48) return v;
