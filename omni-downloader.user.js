@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.10
-// @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it. Can hand files and streams to Ghost Downloader.
+// @version      1.11
+// @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
 // @homepageURL  https://github.com/Adztrz/omni-downloader
@@ -17,11 +17,14 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_cookie
+// @grant        GM_getResourceURL
 // @grant        unsafeWindow
 // @connect      *
 // @connect      127.0.0.1
 // @require      https://cdn.jsdelivr.net/npm/mux.js@6.3.0/dist/mux.min.js
 // @require      https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js
+// @resource     inter https://cdn.jsdelivr.net/npm/@fontsource-variable/inter@5.1.0/files/inter-latin-wght-normal.woff2
+// @resource     mono https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.1.1/files/jetbrains-mono-latin-wght-normal.woff2
 // ==/UserScript==
 
 (function () {
@@ -214,7 +217,9 @@
       catch (e) { if (signal?.aborted || i >= tries) throw e; await new Promise((r) => setTimeout(r, 600 * i)); }
     }
   }
+  let lastSaved = ""; // the name of the file just saved, for the row's "Saved as …"
   function saveBlob(blob, name) {
+    lastSaved = name;
     const u = URL.createObjectURL(blob), a = document.createElement("a");
     a.href = u; a.download = name; a.style.display = "none"; document.documentElement.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(u), 60000);
@@ -243,7 +248,7 @@
             onprogress: (e) => fileProg(ui, "")(e.loaded || 0, e.lengthComputable || e.total > 0 ? e.total : 0) });
           ui.signal?.addEventListener("abort", () => { try { d?.abort(); } catch {} reject(new DOMException("Stopped", "AbortError")); });
         });
-        return;
+        lastSaved = name; return;
       } catch (e) { if (!/not_whitelisted|not_enabled|not_permitted/i.test(String(e.message))) throw e; } // file type not allowed in Tampermonkey's settings: save it ourselves
     }
     saveBlob(new Blob([await getRetry(it.url, "buffer", it.referer, ui.signal, 3, fileProg(ui, ""))]), name);
@@ -514,7 +519,7 @@
     * { box-sizing: border-box; }
     .fab, .p { --canvas: #07090b; --card: #090b0c; --raised: #1a1d1e; --edge: #363738; --hair: #262727; --bone: #e9e1dc; --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a;
       --green: #55bc82; --red: #ff6a5c; --blue: #3e7edf; --soft: cubic-bezier(.1, 0, .1, 1); --out: cubic-bezier(.22, 1, .36, 1); --swap: cubic-bezier(.76, 0, .24, 1);
-      font: 400 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "cv11", "tnum"; -webkit-font-smoothing: antialiased; }
+      font: 400 14px/1.45 "Omni Inter", Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "cv11", "tnum"; -webkit-font-smoothing: antialiased; }
     .fab { position: fixed; right: 16px; bottom: 16px; z-index: 2147483646; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 12px; cursor: pointer;
       display: grid; place-items: center; background: var(--card); color: var(--bone);
       box-shadow: inset 0 0 0 1px var(--edge), 0 12px 24px rgba(0,0,0,.35), 0 2px 4px rgba(0,0,0,.3);
@@ -526,7 +531,7 @@
     .fab svg.x { transform: rotate(-90deg) scale(.6); opacity: 0; }
     .fab[aria-expanded="true"] svg.open { transform: rotate(90deg) scale(.6); opacity: 0; } .fab[aria-expanded="true"] svg.x { transform: none; opacity: 1; }
     .fab .n { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--bone); color: var(--canvas);
-      font: 600 11px/20px "JetBrains Mono", ui-monospace, monospace; text-align: center; box-shadow: 0 0 0 2px var(--card); }
+      font: 600 11px/20px "Omni Mono", "JetBrains Mono", ui-monospace, monospace; text-align: center; box-shadow: 0 0 0 2px var(--card); }
     .fab .n:empty { display: none; }
     @keyframes in { from { opacity: 0; transform: translateY(12px) scale(.9); filter: blur(2px); } }
     .p { position: fixed; right: 16px; bottom: 76px; z-index: 2147483647; width: min(560px, calc(100vw - 32px)); max-height: min(720px, calc(100vh - 120px));
@@ -554,7 +559,7 @@
     .tabs { display: flex; gap: 2px; margin: 10px 12px 0; padding: 2px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
     .tabs button { flex: 1; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; transition: background .2s, color .2s; }
     .tabs button[aria-pressed="true"] { background: var(--raised); color: var(--paper); }
-    .tabs button b { font-weight: 500; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; margin-left: 6px; color: inherit; opacity: .8; }
+    .tabs button b { font-weight: 500; font-family: "Omni Mono", "JetBrains Mono", ui-monospace, monospace; font-size: 12px; margin-left: 6px; color: inherit; opacity: .8; }
     .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px 4px; }
     .bar label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
     .body { overflow: auto; overscroll-behavior: contain; padding: 8px 6px 10px; flex: 1; min-height: 120px; }
@@ -565,21 +570,24 @@
     .cell:hover { box-shadow: inset 0 0 0 1px #696a68; transform: translateY(-1px); }
     .cell img { width: 100%; height: 100%; object-fit: contain; display: block; }
     .cell.sel { box-shadow: inset 0 0 0 2px var(--bone); }
-    .cell .dim { position: absolute; left: 4px; bottom: 4px; padding: 0 5px; border-radius: 4px; background: rgba(7,9,11,.82); color: var(--paper); font: 11px/18px "JetBrains Mono", ui-monospace, monospace; }
+    .cell .dim { position: absolute; left: 4px; bottom: 4px; padding: 0 5px; border-radius: 4px; background: rgba(7,9,11,.82); color: var(--paper); font: 12px/18px "Omni Mono", "JetBrains Mono", ui-monospace, monospace; }
     .cell .ck { position: absolute; top: 6px; left: 6px; width: 18px; height: 18px; border-radius: 5px; background: rgba(7,9,11,.7); box-shadow: inset 0 0 0 1px #696a68; transition: background .15s; }
     .cell.sel .ck { background: var(--bone); box-shadow: none; }
     .cell.sel .ck::after { content: ""; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px; border: solid var(--canvas); border-width: 0 2px 2px 0; transform: rotate(45deg); }
     .row { display: grid; gap: 6px; padding: 10px; border-radius: 8px; transition: background .2s; }
     .row:hover { background: var(--raised); }
     .row + .row { box-shadow: 0 -1px 0 var(--hair); } .row:hover, .row:hover + .row { box-shadow: none; }
-    .row .t { color: var(--paper); font-weight: 500; font-size: 13px; overflow-wrap: anywhere; }
-    .row .u { font: 11px/1.5 "JetBrains Mono", ui-monospace, monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row .t { color: var(--paper); font-weight: 500; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+    .row .meta { color: var(--body); font: 12px/1.5 "Omni Mono", "JetBrains Mono", ui-monospace, monospace; }
+    .row .u { display: flex; min-width: 0; font: 12px/1.5 "Omni Mono", "JetBrains Mono", ui-monospace, monospace; color: var(--muted); white-space: nowrap; }
+    .row .u .a { flex: 0 100 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; } .row .u .z { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; color: var(--body); }
     .row .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 2px; }
     .row.m { grid-template-columns: 128px minmax(0, 1fr); gap: 12px; align-items: start; }
     .row .info { display: grid; gap: 4px; min-width: 0; }
-    .th { position: relative; width: 128px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: #000; box-shadow: inset 0 0 0 1px var(--hair); cursor: pointer; }
+    .th { position: relative; display: block; width: 128px; aspect-ratio: 16 / 9; padding: 0; border: 0; border-radius: 6px; overflow: hidden; background: #000; box-shadow: inset 0 0 0 1px var(--hair); font: inherit; }
+    button.th { cursor: pointer; }
     .th video { width: 100%; height: 100%; object-fit: contain; display: block; }
-    .th:empty::after, .th.none::after { content: attr(data-note); position: absolute; inset: 0; display: grid; place-items: center; color: #696a68; font-size: 11px; text-align: center;
+    .th:empty::after, .th.none::after { content: attr(data-note); position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; text-align: center;
       background: radial-gradient(circle, rgba(233,225,220,.07) 0 1px, transparent 1.5px) 0 0 / 8px 8px; }
     .th.none video { display: none; }
     button.b { height: 32px; padding: 0 12px; border: 0; border-radius: 8px; background: none; color: var(--paper); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
@@ -601,11 +609,30 @@
     @keyframes od-sweep { from { --od-p: 0%; } to { --od-p: 122%; } }
     @media (prefers-reduced-motion: reduce) { .prog.on::after { animation: none; display: none; } }
     .msg { font-size: 12px; color: var(--muted); } .msg.err { color: var(--red); } .msg.ok { color: var(--green); }
-    .empty { margin: 8px 10px; padding: 28px 12px; border-radius: 8px; text-align: center; color: var(--muted); font-size: 13px;
+    .empty { display: grid; justify-items: center; gap: 12px; margin: 8px 10px; padding: 28px 12px; border-radius: 8px; text-align: center; color: var(--body); font-size: 13px;
       background: radial-gradient(circle, rgba(233,225,220,.06) 0 1px, transparent 1.5px) 0 0 / 8px 8px; box-shadow: inset 0 0 0 1px var(--hair); }
-    .foot { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); }
-    kbd { font: 11px "JetBrains Mono", ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); }
+    .foot { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); }
+    .foot .hints { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-right: auto; } .foot .fmsg:empty { display: none; } .foot .fmsg { flex-basis: 100%; }
+    kbd { font: 11px "Omni Mono", "JetBrains Mono", ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); }
     button:focus-visible, select:focus-visible, input:focus-visible, .cell:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .empty p { margin: 0; }
+    .top { transition: box-shadow .2s; } .top:focus-within { box-shadow: inset 0 -2px 0 var(--blue); } .top input:focus-visible { outline: 0; }
+    .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+    .tabs button span { pointer-events: none; }
+    /* one main action and a ▾ joined to it */
+    .split { display: inline-flex; } .split button.b:first-child { border-radius: 8px 0 0 8px; } .split .caret { width: 30px; padding: 0; border-radius: 0 8px 8px 0; display: grid; place-items: center; margin-left: 1px; }
+    .split .caret svg { width: 16px; height: 16px; } .split .caret[aria-expanded="true"] svg { transform: rotate(180deg); }
+    .menu { position: absolute; z-index: 3; min-width: 220px; padding: 4px; border-radius: 10px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--edge), 0 16px 32px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3);
+      animation: menu-in .16s var(--out) both; }
+    @keyframes menu-in { from { opacity: 0; transform: translateY(-4px); } }
+    .mi { display: flex; width: 100%; align-items: center; gap: 12px; height: 34px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--paper); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+    .mi span { flex: 1; } .mi small { color: var(--muted); font: 11px "Omni Mono", "JetBrains Mono", ui-monospace, monospace; letter-spacing: .02em; }
+    .mi:hover, .mi:focus-visible { background: #262a2b; outline: 0; }
+    .menu .sep { height: 1px; margin: 4px 6px; background: var(--edge); }
+    ::selection { background: rgba(233,225,220,.28); color: var(--paper); }
+    .body { scrollbar-width: thin; scrollbar-color: var(--edge) transparent; }
+    @media (pointer: coarse) { button.b, select, .mi { height: 40px; } .shut { width: 40px; height: 40px; } .tabs button { height: 36px; } .split .caret { width: 40px; } }
+    @media (prefers-reduced-motion: reduce) { .fab:hover, .fab:active, .cell:hover, button.b:active { transform: none; } .fab svg, .prog i { transition: none; } .menu { animation: none; } }
   `;
   // the halftone wave animates a length, which only works on a registered property (and that can't be done inside a shadow root)
   try { CSS.registerProperty({ name: "--ht-w", syntax: "<length>", inherits: false, initialValue: "9000px" }); } catch {}
@@ -614,10 +641,13 @@
     down: '<svg class="open" viewBox="12 12 104 104" fill="currentColor"><g><circle cx="91.0" cy="26.8" r="1.1" fill-opacity="0.41"/><circle cx="98.2" cy="33.2" r="1.1" fill-opacity="0.46"/><circle cx="103.8" cy="41.0" r="1.3" fill-opacity="0.51"/><circle cx="107.7" cy="49.8" r="1.5" fill-opacity="0.57"/><circle cx="109.7" cy="59.2" r="1.7" fill-opacity="0.64"/><circle cx="109.7" cy="68.8" r="2.0" fill-opacity="0.71"/><circle cx="107.7" cy="78.2" r="2.3" fill-opacity="0.78"/><circle cx="103.8" cy="87.0" r="2.6" fill-opacity="0.84"/><circle cx="98.2" cy="94.8" r="2.9" fill-opacity="0.89"/><circle cx="91.0" cy="101.2" r="3.2" fill-opacity="0.94"/><circle cx="82.7" cy="106.0" r="3.4" fill-opacity="0.97"/><circle cx="73.6" cy="109.0" r="3.6" fill-opacity="0.99"/><circle cx="64.0" cy="110.0" r="3.6" fill-opacity="1.00"/><circle cx="54.4" cy="109.0" r="3.6" fill-opacity="0.99"/><circle cx="45.3" cy="106.0" r="3.4" fill-opacity="0.97"/><circle cx="37.0" cy="101.2" r="3.2" fill-opacity="0.94"/><circle cx="29.8" cy="94.8" r="2.9" fill-opacity="0.89"/><circle cx="24.2" cy="87.0" r="2.6" fill-opacity="0.84"/><circle cx="20.3" cy="78.2" r="2.3" fill-opacity="0.78"/><circle cx="18.3" cy="68.8" r="2.0" fill-opacity="0.71"/><circle cx="18.3" cy="59.2" r="1.7" fill-opacity="0.64"/><circle cx="20.3" cy="49.8" r="1.5" fill-opacity="0.57"/><circle cx="24.2" cy="41.0" r="1.3" fill-opacity="0.51"/><circle cx="29.8" cy="33.2" r="1.1" fill-opacity="0.46"/><circle cx="37.0" cy="26.8" r="1.1" fill-opacity="0.41"/><circle cx="87.1" cy="33.9" r="0.9" fill-opacity="0.42"/><circle cx="94.1" cy="40.9" r="1.0" fill-opacity="0.48"/><circle cx="99.1" cy="49.5" r="1.2" fill-opacity="0.55"/><circle cx="101.7" cy="59.0" r="1.4" fill-opacity="0.63"/><circle cx="101.7" cy="69.0" r="1.7" fill-opacity="0.72"/><circle cx="99.1" cy="78.5" r="2.1" fill-opacity="0.80"/><circle cx="94.1" cy="87.1" r="2.4" fill-opacity="0.87"/><circle cx="87.1" cy="94.1" r="2.7" fill-opacity="0.93"/><circle cx="78.5" cy="99.1" r="2.9" fill-opacity="0.98"/><circle cx="69.0" cy="101.7" r="3.0" fill-opacity="1.00"/><circle cx="59.0" cy="101.7" r="3.0" fill-opacity="1.00"/><circle cx="49.5" cy="99.1" r="2.9" fill-opacity="0.98"/><circle cx="40.9" cy="94.1" r="2.7" fill-opacity="0.93"/><circle cx="33.9" cy="87.1" r="2.4" fill-opacity="0.87"/><circle cx="28.9" cy="78.5" r="2.1" fill-opacity="0.80"/><circle cx="26.3" cy="69.0" r="1.7" fill-opacity="0.72"/><circle cx="26.3" cy="59.0" r="1.4" fill-opacity="0.63"/><circle cx="28.9" cy="49.5" r="1.2" fill-opacity="0.55"/><circle cx="33.9" cy="40.9" r="1.0" fill-opacity="0.48"/><circle cx="40.9" cy="33.9" r="0.9" fill-opacity="0.42"/></g><path d="M64 41v34M51 63l13 13 13-13M49 88h30" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>', // the logo: the download arrow in its halftone ring
     x: '<svg class="x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
     find: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
+    caret: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10l5 5 5-5"/></svg>',
     again: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>',
   };
-  let host, root, fab, panel, main, query = "", tab = store.get("tab", "video"), minSize = store.get("min", 150);
-  const picked = new Set(), jobs = new Map(); // url → { ctl, frac, text, err, done }
+  let host, root, fab, panel, main, foot, live, menu = null, pendingDraw = false, opener = null, gridFocus = "", query = "";
+  let tab = store.get("tab", "video"), minSize = store.get("min", 150), barMsg = { text: "", tone: "" };
+  const picked = new Set(), jobs = new Map(); // url → { ctl, frac, text, err, done, at }
+  const rows = new Map(), cells = new Map(); // each row and image tile is made once and kept, so nothing reloads on a redraw
   const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const btn = (t, run, cls = "b") => { const b = mk("button", cls, t); b.type = "button"; b.onclick = run; return b; };
   // a "video" file that turned out to have no picture (DASH sites name their sound files .mp4 / .m4s) is a sound track
@@ -644,157 +674,392 @@
     const t = document.createElement("template");
     try { t.innerHTML = trusted ? trusted.createHTML(ICON[name]) : ICON[name]; }
     catch { return document.createElement("span"); } // a page that allows no policy of ours: no icon, but everything else works
-    return t.content.firstChild;
+    const s = t.content.firstChild; s.setAttribute("aria-hidden", "true"); return s;
   };
+  // the shortcut: Alt+Shift+D, since Alt+D is the browser's own "go to the address bar". Alt+D can be chosen in the menu.
+  const altD = () => store.get("key", "alt+shift+d") === "alt+d";
+  const keyNames = () => altD() ? ["Alt", "D"] : ["Alt", "Shift", "D"];
+
+  // the panel's type: Inter and JetBrains Mono come bundled with the script (@resource) and are added from their bytes,
+  // so no page makes a font request and no page's font rules (CSP) can block them. Without them, the system's fonts.
+  let fontsOn = false;
+  function loadFonts() {
+    if (fontsOn || typeof GM_getResourceURL !== "function" || !document.fonts || typeof FontFace !== "function") return;
+    fontsOn = true;
+    for (const [name, res, weight] of [["Omni Inter", "inter", "100 900"], ["Omni Mono", "mono", "100 800"]]) {
+      try {
+        const add = (src) => { const f = new FontFace(name, src, { weight }); document.fonts.add(f); f.load().catch(() => {}); };
+        const u = GM_getResourceURL(res, false);
+        if (!u) continue;
+        if (/^data:/.test(u)) { const b = atob(u.slice(u.indexOf(",") + 1)), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); add(a.buffer); }
+        else fetch(u).then((r) => r.arrayBuffer()).then(add, () => {});
+      } catch {}
+    }
+  }
+
   function mount() {
     if (host || !document.body) return;
     host = mk("div"); host.id = "omni-downloader"; root = host.attachShadow({ mode: "closed" });
     root.append(mk("style", null, css));
-    fab = btn("", () => toggle(), "fab"); fab.title = "Omni Downloader (Alt+D)"; fab.setAttribute("aria-expanded", "false");
+    fab = btn("", () => toggle(), "fab"); fab.title = `Omni Downloader (${keyNames().join("+")})`; fab.setAttribute("aria-expanded", "false");
+    fab.onkeydown = (e) => { if (e.key === "Escape" && panel) { e.preventDefault(); toggle(); } };
     fab.append(svg("down"), svg("x"), mk("span", "n"));
-    root.append(fab); document.documentElement.append(host); drawFab();
+    fab.lastChild.setAttribute("aria-hidden", "true");
+    root.append(fab); document.documentElement.append(host); drawFab(); loadFonts();
   }
   function drawFab() {
     if (!fab) return;
-    const n = groups(), media = n.video.length + n.audio.length;
+    const n = groups(), media = n.video.length + n.audio.length, imgs = n.image.filter(big).length;
     fab.querySelector(".n").textContent = media ? String(media) : "";
-    fab.setAttribute("aria-label", `Omni Downloader: ${media} video and audio, ${n.image.length} images`);
+    fab.setAttribute("aria-label", `Omni Downloader: ${media} video and audio, ${imgs} ${imgs === 1 ? "image" : "images"}`);
     fab.setAttribute("aria-expanded", String(!!panel && !panel.classList.contains("out")));
     fab.style.display = store.get("fab", true) || panel ? "" : "none";
   }
   let drawT = 0;
-  onChange = () => { clearTimeout(drawT); drawT = setTimeout(() => { drawFab(); if (panel && tab !== "image") draw(); }, 400); };
+  onChange = () => { clearTimeout(drawT); drawT = setTimeout(() => { drawFab(); if (menu) pendingDraw = true; else draw(); }, 400); };
+  // one place screen readers hear from: saves, Ghost, copies, errors
+  function say(text) { if (!live || !text) return; live.textContent = ""; setTimeout(() => { if (live) live.textContent = text; }, 60); }
+  // a failure in words a person can act on
+  function friendly(e) {
+    const m = String(e?.message || e || "It failed"), code = +(/HTTP (\d{3})/.exec(m)?.[1] || 0);
+    if (code === 401 || code === 403) return `The site refused it (HTTP ${code}). Reload the page and try again, or send it to Ghost.`;
+    if (code === 404 || code === 410) return `The file is gone (HTTP ${code}). Play the video again, then press Look again.`;
+    if (code >= 500) return `The site's server failed (HTTP ${code}). Try again in a moment.`;
+    if (/timed out/i.test(m)) return "It timed out. Try again, or send it to Ghost.";
+    if (/network error|failed to fetch/i.test(m)) return "The connection failed. Check you're online, then try again.";
+    return /[.!?]$/.test(m) ? m : `${m}.`;
+  }
+
   function toggle() {
     mount(); if (!root) return;
     if (panel) {
-      const p = panel; panel = null; main = null; p.classList.add("out"); drawFab();
+      const p = panel, inside = p.contains(root.activeElement);
+      closeMenu(); panel = null; main = null; foot = null; live = null; query = ""; p.classList.add("out"); drawFab();
+      if (inside) { try { (opener?.isConnected && opener !== document.body ? opener : fab).focus({ preventScroll: true }); } catch {} }
       setTimeout(() => p.remove(), matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 230); return;
     }
+    const was = document.activeElement; opener = was === host ? fab : was;
     try { scan(); } catch {}
-    panel = mk("div", "p"); panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "Omni Downloader");
+    panel = mk("div", "p"); panel.setAttribute("role", "dialog"); panel.setAttribute("aria-labelledby", "od-h");
     const opened = panel, done = () => opened.classList.add("done"); // drops the dot mask once the wave has passed
     opened.addEventListener("animationend", done, { once: true }); setTimeout(done, 700); // (a background tab may never end the animation)
+    const h = mk("h2", "sr", "Omni Downloader"); h.id = "od-h";
+    live = mk("div", "sr"); live.setAttribute("role", "status"); live.setAttribute("aria-live", "polite");
     // the filter bar, made once so typing in it isn't interrupted by redraws
-    const top = mk("div", "top"), q = mk("input"); q.placeholder = "Filter by name or address…"; q.value = query; q.setAttribute("aria-label", "Filter");
+    const top = mk("div", "top"), q = mk("input"); q.placeholder = "Filter by name or address…"; q.value = query; q.setAttribute("aria-label", "Filter"); q.dataset.k = "filter";
     q.oninput = () => { query = q.value; draw(); };
-    q.onkeydown = (e) => { if (e.key === "Escape") { e.stopPropagation(); if (q.value) { q.value = query = ""; draw(); } else toggle(); } };
-    const again = btn("", () => { try { scan(); } catch {} draw(); }, "shut"); again.append(svg("again")); again.title = "Look again"; again.setAttribute("aria-label", "Look again");
+    q.onkeydown = (e) => {
+      if (e.key === "Escape" && q.value) { e.preventDefault(); e.stopPropagation(); q.value = query = ""; draw(); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); (main.querySelector(".body [data-k$=':main']") || main.querySelector(".body .cell[tabindex='0']") || main.querySelector(".bar button:not(:disabled), .body button"))?.focus(); }
+    };
+    const again = btn("", () => { try { scan(); } catch {} draw(); const g = groups(); say(`Looked again: ${g.video.length} video, ${g.image.filter(big).length} images, ${g.audio.length} audio.`); }, "shut");
+    again.append(svg("again")); again.title = "Look again"; again.setAttribute("aria-label", "Look again"); again.dataset.k = "again";
     const shut = btn("", () => toggle(), "shut"); const xs = svg("x"); xs.classList.remove("x"); shut.append(xs); shut.title = "Close (Esc)"; shut.setAttribute("aria-label", "Close");
-    top.append(svg("find"), q, again, shut);
+    const lens = svg("find"); top.append(lens, q, again, shut);
     main = mk("div", "main");
-    const foot = mk("div", "foot"), keys = (...k) => { const sp = mk("span"); k.forEach((x, i) => sp.append(i < k.length - 1 ? mk("kbd", null, x) : x, i < k.length - 2 ? " " : "")); return sp; };
-    foot.append(keys("Alt", "D", " open / close"), keys("Esc", " close"), mk("span", null, "Double-click an image to save it"));
+    foot = mk("div", "foot"); const hints = mk("span", "hints");
     // the page itself, for sites Ghost reads on its own (YouTube and Bilibili through yt-dlp and its own support)
-    const fmsg = mk("span", "msg"), page = btn("Page to Ghost", () => {
-      page.disabled = true; fmsg.className = "msg"; fmsg.textContent = "Sending…";
-      ghostAdd(location.href, location.href).then(() => { fmsg.className = "msg ok"; fmsg.textContent = "Sent."; }, (e) => { fmsg.className = "msg err"; fmsg.textContent = e.message; }).finally(() => { page.disabled = false; });
+    const page = btn("Page to Ghost", () => {
+      page.disabled = true; setFoot("Sending the page…");
+      ghostAdd(location.href, location.href).then(() => setFoot("Page sent to Ghost.", "ok", true), (e) => setFoot(e.message, "err", true)).finally(() => { page.disabled = false; });
     });
-    page.title = "Send this page's address to Ghost Downloader (YouTube, Bilibili and others it reads itself)"; page.style.marginLeft = "auto"; foot.append(page, fmsg);
-    panel.append(top, main, foot);
+    page.title = "Send this page's address to Ghost Downloader (YouTube, Bilibili and others it reads itself)"; page.dataset.k = "page";
+    foot.append(hints, page, mk("span", "msg fmsg"));
+    panel.append(h, live, top, main, foot);
+    // keys stay with the panel: Esc closes it, arrows move, and the page's own shortcuts (YouTube's space, k, j…) don't fire
+    panel.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); if (menu) closeMenu(true); else toggle(); }
+      else if (menu) menuKeys(e);
+      else arrows(e);
+    });
+    for (const t of ["keydown", "keyup", "keypress"]) panel.addEventListener(t, (e) => e.stopPropagation());
+    panel.addEventListener("pointerdown", (e) => { if (menu && !menu.contains(e.target) && e.target !== menu.anchor && !menu.anchor?.contains(e.target)) closeMenu(); });
     root.append(panel); draw(); drawFab();
+    q.focus({ preventScroll: true });
   }
+  const setFoot = (text, tone = "", announce = false) => { const m = foot?.querySelector(".fmsg"); if (m) { m.className = `msg fmsg ${tone}`; m.textContent = text; } if (announce) say(text); };
+
   function draw() {
     if (!panel) return;
+    if (menu) { pendingDraw = true; return; }
     for (const it of found.values()) if (it.kind === "hls") hlsLoad(it);
     probeAll();
+    // a redraw replaces the panel's insides: remember what had focus and where the list was scrolled, and put both back
+    const a = root.activeElement, k = a && main.contains(a) ? a.dataset.k : null;
     const g = groups(), body = main.querySelector(".body"), keep = body ? body.scrollTop : 0;
     main.replaceChildren();
-    const tabs = mk("div", "tabs");
-    for (const [k, t] of [["video", "Video"], ["image", "Images"], ["audio", "Audio"]]) {
-      const n = k === "image" ? g.image.filter(big).length : g[k].length;
-      const b = btn(t, () => { tab = k; store.set("tab", k); draw(); }, ""); b.append(mk("b", null, String(n))); b.setAttribute("aria-pressed", String(k === tab)); tabs.append(b);
+    const tabs = mk("div", "tabs"); tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", "Kind of media");
+    for (const [kk, t] of [["video", "Video"], ["image", "Images"], ["audio", "Audio"]]) {
+      const n = kk === "image" ? g.image.filter(big).length : g[kk].length;
+      const b = btn("", () => setTab(kk), ""); b.id = `od-tab-${kk}`; b.dataset.k = `tab:${kk}`;
+      b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(kk === tab)); b.setAttribute("aria-controls", "od-body"); b.tabIndex = kk === tab ? 0 : -1;
+      b.setAttribute("aria-label", `${t}, ${n} ${n === 1 ? "item" : "items"}`);
+      const c = mk("b", null, String(n)); c.setAttribute("aria-hidden", "true"); b.append(mk("span", null, t), c); tabs.append(b);
     }
     main.append(tabs);
-    const nb = mk("div", "body");
+    const nb = mk("div", "body"); nb.id = "od-body"; nb.setAttribute("role", "tabpanel"); nb.setAttribute("aria-labelledby", `od-tab-${tab}`);
     if (tab === "image") drawImages(g.image, nb); else drawMedia(g[tab], nb);
-    main.append(nb); nb.scrollTop = keep; drawFab();
+    main.append(nb); nb.scrollTop = keep;
+    // the footer's hints follow the tab
+    const kb = (...ks) => { const s = mk("span"); ks.forEach((x, i) => { if (i < ks.length - 1) s.append(mk("kbd", null, x), " "); else s.append(x); }); return s; };
+    foot?.querySelector(".hints").replaceChildren(...(tab === "image"
+      ? [kb("Space", "select"), kb("Enter", "save"), kb("Esc", "close")]
+      : [kb(...keyNames(), "open"), kb("↑", "↓", "move"), kb("Esc", "close")]));
+    if (k) { const el = main.querySelector(`[data-k="${CSS.escape(k)}"]`); if (el && root.activeElement !== el) el.focus({ preventScroll: true }); }
+    drawFab();
   }
-  const big = (it) => !it.w || (it.w >= minSize && it.h >= minSize) || it.kind !== "image";
+  function setTab(k) { tab = k; store.set("tab", k); draw(); main.querySelector(`[data-k="tab:${k}"]`)?.focus(); }
+  const big = (it) => it.kind !== "image" || !it.broken && (!it.w || (it.w >= minSize && it.h >= minSize));
 
-  function drawImages(list, nb) {
-    const shown = list.filter(big), bar = mk("div", "bar");
-    const min = mk("input"); min.type = "number"; min.min = "0"; min.step = "50"; min.value = minSize;
-    min.onchange = () => { minSize = Math.max(0, +min.value || 0); store.set("min", minSize); draw(); };
-    const l = mk("label"); l.append("Smallest", min, "px"); bar.append(l);
-    const sel = shown.filter((it) => picked.has(it.url));
-    bar.append(btn(sel.length === shown.length && shown.length ? "Select none" : "Select all", () => { if (sel.length === shown.length) shown.forEach((x) => picked.delete(x.url)); else shown.forEach((x) => picked.add(x.url)); draw(); }));
-    const zip = btn(sel.length ? `ZIP ${sel.length}` : "ZIP", () => saveZip(sel, zip, msg), "b pri"); zip.disabled = !sel.length;
-    const each = btn("One by one", () => saveEach(sel, msg)); each.disabled = !sel.length;
-    const gh = btn("Ghost", () => ghostEach(sel.filter((x) => /^https?:/.test(x.url)), msg)); gh.disabled = !sel.length; gh.title = "Download them with Ghost Downloader";
-    const msg = mk("span", "msg"); bar.append(zip, each, gh, msg);
-    main.append(bar);
-    if (!shown.length) return nb.append(mk("p", "empty", list.length ? `No images of ${minSize}px or more: lower the number above.` : "No images found yet."));
-    const grid = mk("div", "grid");
-    for (const it of shown) {
-      const c = mk("div", "cell" + (picked.has(it.url) ? " sel" : "")); c.tabIndex = 0; c.title = it.url; c.setAttribute("role", "checkbox"); c.setAttribute("aria-checked", String(picked.has(it.url)));
-      const im = mk("img"); im.loading = "lazy"; im.referrerPolicy = "no-referrer-when-downgrade"; im.src = it.url;
-      im.onload = () => { if (!it.w) { it.w = im.naturalWidth; it.h = im.naturalHeight; dim.textContent = `${it.w}×${it.h}`; } };
-      const dim = mk("span", "dim", it.w ? `${it.w}×${it.h}` : "");
-      c.append(im, mk("span", "ck"), dim);
-      const flip = () => { picked.has(it.url) ? picked.delete(it.url) : picked.add(it.url); draw(); };
-      c.onclick = flip; c.onkeydown = (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); flip(); } };
-      c.ondblclick = (e) => { e.stopPropagation(); saveDirect(it).catch(() => {}); };
-      grid.append(c);
+  // ---------- moving with the keyboard ----------
+  function arrows(e) {
+    const a = root.activeElement; if (!a || !/^Arrow/.test(e.key)) return;
+    if (a.getAttribute("role") === "tab") {
+      if (e.key === "ArrowDown") { e.preventDefault(); (main.querySelector(".body [data-k$=':main']") || main.querySelector(".bar input, .bar button:not(:disabled)"))?.focus(); return; }
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const order = ["video", "image", "audio"], i = order.indexOf(tab) + (e.key === "ArrowRight" ? 1 : -1);
+      e.preventDefault(); setTab(order[(i + 3) % 3]); return;
     }
+    if (a.classList.contains("cell")) {
+      const all = [...main.querySelectorAll(".cell")], i = all.indexOf(a), cols = getComputedStyle(a.parentElement).gridTemplateColumns.split(" ").length || 1;
+      const j = i + ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -cols, ArrowDown: cols }[e.key] || 0);
+      e.preventDefault(); if (all[j]) all[j].focus(); else if (j < 0) main.querySelector(".bar button, .bar input")?.focus(); return;
+    }
+    const row = a.closest?.(".row");
+    if (row && (e.key === "ArrowDown" || e.key === "ArrowUp") && a.tagName !== "SELECT") {
+      const list = [...main.querySelectorAll(".row")], next = list[list.indexOf(row) + (e.key === "ArrowDown" ? 1 : -1)];
+      e.preventDefault();
+      if (next) (next.querySelector("[data-k$=':main']") || next.querySelector("button, select"))?.focus();
+      else if (e.key === "ArrowUp") panel.querySelector(".top input")?.focus();
+    }
+  }
+
+  // ---------- the ▾ menu: one at a time, inside the panel ----------
+  function openMenu(anchor, items) {
+    if (menu && menu.anchor === anchor) return closeMenu(true);
+    closeMenu();
+    menu = mk("div", "menu"); menu.setAttribute("role", "menu"); menu.anchor = anchor;
+    for (const x of items) {
+      if (x.sep) { menu.append(mk("div", "sep")); continue; }
+      const b = btn("", () => { closeMenu(true); x.run(); }, "mi"); b.tabIndex = -1;
+      b.setAttribute("role", x.check == null ? "menuitem" : "menuitemcheckbox"); if (x.check != null) b.setAttribute("aria-checked", String(x.check));
+      b.append(mk("span", null, x.label)); if (x.on) b.append(mk("small", null, "default")); if (x.check) b.append(mk("small", null, "on"));
+      menu.append(b);
+    }
+    anchor.setAttribute("aria-expanded", "true");
+    panel.append(menu);
+    const pr = panel.getBoundingClientRect(), ar = anchor.getBoundingClientRect(), mh = menu.offsetHeight, mw = menu.offsetWidth;
+    let top = ar.bottom - pr.top + 4; if (top + mh > pr.height - 8) top = ar.top - pr.top - mh - 4;
+    menu.style.top = `${Math.max(8, top)}px`; menu.style.left = `${Math.max(8, Math.min(ar.right - pr.left - mw, pr.width - mw - 8))}px`;
+    menu.querySelector(".mi")?.focus();
+  }
+  function closeMenu(refocus) {
+    if (!menu) return;
+    const a = menu.anchor; menu.remove(); menu = null; a?.setAttribute("aria-expanded", "false");
+    if (refocus && a?.isConnected) a.focus({ preventScroll: true });
+    if (pendingDraw) { pendingDraw = false; draw(); }
+  }
+  function menuKeys(e) {
+    const items = [...menu.querySelectorAll(".mi")], i = items.indexOf(root.activeElement);
+    const go = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: items.length - 1 }[e.key];
+    if (go != null) { e.preventDefault(); items[(go + items.length) % items.length]?.focus(); }
+    else if (e.key === "Tab") closeMenu();
+  }
+  // one main action and a ▾ for the rest; the main one is whichever you last picked from the menu
+  function split(label, run, items, k, strong) {
+    const w = mk("div", "split"), cls = strong ? "b pri" : "b";
+    const a = btn(label, run, cls), c = btn("", (e) => openMenu(c, items), `${cls} caret`);
+    a.dataset.k = `${k}:main`; c.dataset.k = `${k}:more`; c.title = "More"; c.setAttribute("aria-label", `More for ${label}`);
+    c.setAttribute("aria-haspopup", "menu"); c.setAttribute("aria-expanded", "false"); c.append(svg("caret"));
+    w.append(a, c); return w;
+  }
+
+  // ---------- Images ----------
+  function drawImages(list, nb) {
+    const shown = list.filter(big);
+    main.append(drawBar(shown));
+    if (!shown.length) {
+      if (list.length && !query) return empty(nb, `No images of ${minSize}px or more.`, "Show every size", () => { minSize = 0; store.set("min", 0); draw(); });
+      return empty(nb, "No images found yet.");
+    }
+    if (!shown.some((x) => x.url === gridFocus)) gridFocus = shown[0].url;
+    const grid = mk("div", "grid");
+    for (const it of shown) { const c = cellOf(it); c.tabIndex = it.url === gridFocus ? 0 : -1; grid.append(c); }
     nb.append(grid);
   }
-  async function saveEach(list, msg) {
-    let ok = 0, bad = 0;
-    for (const it of list) { msg.textContent = `Saving ${ok + bad + 1} of ${list.length}…`; try { await saveDirect(it); ok++; } catch { bad++; } }
-    msg.className = "msg " + (bad ? "err" : "ok"); msg.textContent = `${ok} saved${bad ? `, ${bad} failed` : ""}.`;
+  function cellOf(it) {
+    let c = cells.get(it.url);
+    if (!c) {
+      c = mk("div", "cell"); c.dataset.k = `cell:${it.url}`; c.title = it.url; c.setAttribute("role", "checkbox");
+      const im = mk("img"); im.alt = ""; im.loading = "lazy"; im.referrerPolicy = "no-referrer-when-downgrade"; im.src = it.url;
+      const dim = mk("span", "dim", it.w ? `${it.w}×${it.h}` : ""); dim.setAttribute("aria-hidden", "true");
+      im.onerror = () => { it.broken = true; onChange(); }; // a dead address isn't worth a tile
+      im.onload = () => { if (!it.w) { it.w = im.naturalWidth; it.h = im.naturalHeight; dim.textContent = `${it.w}×${it.h}`; name(); } };
+      const name = () => c.setAttribute("aria-label", `${fileName(it, "jpg")}${it.w ? `, ${it.w} by ${it.h}` : ""}`);
+      const ck = mk("span", "ck"); ck.setAttribute("aria-hidden", "true");
+      c.append(im, ck, dim); name();
+      c.onclick = () => flip(it, c);
+      c.onfocus = () => { gridFocus = it.url; for (const x of main?.querySelectorAll(".cell") || []) x.tabIndex = x === c ? 0 : -1; };
+      c.onkeydown = (e) => { if (e.key === " ") { e.preventDefault(); flip(it, c); } else if (e.key === "Enter") { e.preventDefault(); saveOne(it); } };
+      c.ondblclick = (e) => { e.stopPropagation(); saveOne(it); };
+      cells.set(it.url, c);
+    }
+    c.classList.toggle("sel", picked.has(it.url)); c.setAttribute("aria-checked", String(picked.has(it.url)));
+    return c;
   }
-  async function saveZip(list, b, msg) {
+  // ticking a tile changes it and the bar, nothing else, so focus and the grid stay where they are
+  function flip(it, c) {
+    picked.has(it.url) ? picked.delete(it.url) : picked.add(it.url);
+    c.classList.toggle("sel", picked.has(it.url)); c.setAttribute("aria-checked", String(picked.has(it.url)));
+    const shown = groups().image.filter(big), old = main?.querySelector(".bar");
+    if (old) { const a = root.activeElement, k = a && old.contains(a) ? a.dataset.k : null, nw = drawBar(shown); old.replaceWith(nw); if (k) nw.querySelector(`[data-k="${CSS.escape(k)}"]`)?.focus(); }
+  }
+  function saveOne(it) {
+    setBar(`Saving ${fileName(it, "jpg")}…`);
+    lastSaved = ""; saveDirect(it).then(() => setBar(`Saved ${lastSaved || fileName(it, "jpg")}.`, "ok", true), (e) => setBar(friendly(e), "err", true));
+  }
+  function drawBar(shown) {
+    const bar = mk("div", "bar"), sel = shown.filter((it) => picked.has(it.url)), n = sel.length;
+    const min = mk("input"); min.type = "number"; min.min = "0"; min.step = "50"; min.value = minSize; min.dataset.k = "bar:min"; min.setAttribute("aria-label", "Smallest size in pixels");
+    min.onchange = () => { minSize = Math.max(0, +min.value || 0); store.set("min", minSize); draw(); };
+    const l = mk("label"); l.append("Smallest", min, "px"); bar.append(l);
+    const all = btn(n === shown.length && n ? "Select none" : "Select all", () => {
+      if (n === shown.length) shown.forEach((x) => picked.delete(x.url)); else shown.forEach((x) => picked.add(x.url));
+      for (const it of shown) cellOf(it);
+      const old = main.querySelector(".bar"), nw = drawBar(shown); old.replaceWith(nw); nw.querySelector("[data-k='bar:all']")?.focus();
+      say(n === shown.length ? "None selected." : `${shown.length} selected.`);
+    }); all.dataset.k = "bar:all"; all.disabled = !shown.length;
+    const via = store.get("viaImg", "zip"), sendable = sel.filter((x) => /^https?:/.test(x.url));
+    const act = { zip: () => saveZip(sel), each: () => saveEach(sel), ghost: () => ghostEach(sendable) };
+    const pick = (v) => () => { store.set("viaImg", v); act[v](); };
+    const label = n ? { zip: `ZIP ${n}`, each: `Save ${n}`, ghost: `Ghost ${n}` }[via] : { zip: "ZIP", each: "Save", ghost: "Ghost" }[via];
+    const sp = split(label, act[via], [
+      { label: "Save as one ZIP", run: pick("zip"), on: via === "zip" },
+      { label: "Save one by one", run: pick("each"), on: via === "each" },
+      { label: "Send to Ghost Downloader", run: pick("ghost"), on: via === "ghost" },
+    ], "bar:go", true);
+    for (const b of sp.children) b.disabled = !n;
+    const msg = mk("span", `msg ${barMsg.tone}`, barMsg.text);
+    bar.append(all, sp, msg);
+    return bar;
+  }
+  const setBar = (text, tone = "", announce = false) => { barMsg = { text, tone }; const m = main?.querySelector(".bar .msg"); if (m) { m.className = `msg ${tone}`; m.textContent = text; } if (announce) say(text); };
+  async function saveEach(list) {
+    let ok = 0, bad = 0, why = "";
+    for (const it of list) { setBar(`Saving ${ok + bad + 1} of ${list.length}…`); try { await saveDirect(it); ok++; } catch (e) { bad++; why = friendly(e); } }
+    setBar(bad ? `${ok} saved, ${bad} failed. ${why}` : `${ok} saved.`, bad ? "err" : "ok", true);
+  }
+  async function saveZip(list) {
     const ff = W.fflate || window.fflate || (typeof fflate !== "undefined" ? fflate : null);
-    if (!ff?.zip) return saveEach(list, msg);
-    b.disabled = true; const files = {}, names = new Set(); let bad = 0, n = 0;
+    if (!ff?.zip) return saveEach(list);
+    const files = {}, names = new Set(); let bad = 0, n = 0;
     await Promise.all(list.map(async (it) => {
       try {
         const buf = await getRetry(it.url, "buffer", it.referer);
         let name = fileName(it, "jpg"), i = 1; while (names.has(name)) name = name.replace(/(\.\w+)?$/, ` (${++i})$1`); names.add(name);
         files[name] = [new Uint8Array(buf), { level: 0 }]; // images are compressed already
       } catch { bad++; }
-      msg.textContent = `Fetching ${++n} of ${list.length}…`;
+      setBar(`Fetching ${++n} of ${list.length}…`);
     }));
     ff.zip(files, (err, data) => {
-      b.disabled = false;
-      if (err) { msg.className = "msg err"; msg.textContent = "Couldn't make the ZIP."; return; }
-      saveBlob(new Blob([data], { type: "application/zip" }), `${clean(document.title)} images.zip`);
-      msg.className = "msg " + (bad ? "err" : "ok"); msg.textContent = `${Object.keys(files).length} in the ZIP${bad ? `, ${bad} couldn't be fetched` : ""}.`;
+      if (err) return setBar("Couldn't make the ZIP. Try Save one by one from the ▾ menu.", "err", true);
+      const name = `${clean(document.title)} images.zip`;
+      saveBlob(new Blob([data], { type: "application/zip" }), name);
+      setBar(`${Object.keys(files).length} in ${name}${bad ? `; ${bad} couldn't be fetched` : ""}.`, bad ? "err" : "ok", true);
     });
   }
-
-  function drawMedia(list, nb) {
-    if (!list.length) {
-      nb.append(mk("p", "empty", tab === "video" ? "No video found yet. Press play, then look again: streams show up once the player loads them." : "No audio found yet."));
-      return;
-    }
-    for (const it of list) {
-      const row = mk("div", "row m"), info = mk("div", "info"), job = jobs.get(it.url);
-      row.append(thumb(it), info); sizeLoad(it);
-      info.append(mk("div", "t", rowTitle(it)), mk("div", "u", it.url));
-      if (soundOnly(it)) info.append(mk("div", "msg", "Saving its video joins this sound in; save it here for the sound alone."));
-      const acts = mk("div", "acts");
-      if (it.kind === "hls") hlsActs(it, acts, job);
-      else if (it.kind === "yt") acts.append(mk("span", "msg", "YouTube locks its streams: Ghost saves it with yt-dlp."));
-      else if (it.kind === "dash") acts.append(mk("span", "msg", "DASH isn't saved here: send it to Ghost or copy the ffmpeg command."));
-      else if (job && !job.done && !job.err) acts.append(btn("Stop", () => job.ctl.abort()));
-      else acts.append(btn(job?.done ? "Save again" : "Save", () => runDirect(it), "b pri"));
-      if (/^https?:/.test(it.url)) acts.append(ghostBtn(it));
-      acts.append(btn("Copy URL", () => copy(it.url)));
-      if (it.kind !== "yt") acts.append(btn("Copy ffmpeg", () => copy(`ffmpeg -headers "Referer: ${it.referer || location.href}\\r\\n" -i "${it.url}" -c copy "${fileName(it, "mp4").replace(/\.\w+$/, "")}.mp4"`)));
-      info.append(acts);
-      if (it.ghost) info.append(mk("div", "msg" + (it.ghost.err ? " err" : it.ghost.ok ? " ok" : ""), it.ghost.text));
-      if (job) {
-        const pr = mk("div", "prog" + (job.err ? " err" : job.done ? "" : " on")), bar = mk("i"); bar.style.width = `${Math.round((job.frac || 0) * 100)}%`; pr.append(bar);
-        info.append(pr, mk("div", "msg" + (job.err ? " err" : job.done ? " ok" : ""), job.err || job.text || ""));
-        job.bar = bar; job.row = info;
-      }
-      nb.append(row);
-    }
+  function empty(nb, text, action, run) {
+    const e = mk("div", "empty");
+    if (query) {
+      e.append(mk("p", null, `Nothing matches “${query}”.`), btn("Clear the filter", () => { query = ""; const q = panel.querySelector(".top input"); q.value = ""; draw(); q.focus(); }));
+    } else { e.append(mk("p", null, text)); if (action) e.append(btn(action, run)); }
+    nb.append(e);
   }
+
+  // ---------- Video and Audio rows ----------
+  function drawMedia(list, nb) {
+    if (!list.length) return empty(nb, tab === "video" ? "No video found yet. Press play, then Look again: streams show up once the player loads them." : "No audio found yet.");
+    list.forEach((it, i) => nb.append(rowOf(it, i === 0)));
+  }
+  const canGhost = (it) => /^https?:/.test(it.url);
+  // a row is rebuilt only when something it shows changes; names and sizes that arrive later are written in place
+  function rowOf(it, first) {
+    const job = jobs.get(it.url), via = store.get("via", "save");
+    const sig = JSON.stringify([first, via, it.kind, soundOnly(it), !!it.variants, it.variants?.length, it.pick, !!it.asTs, it.err, it.drm, it.dur,
+      job && [job.at, !!job.done, job.err], it.status?.at]);
+    const had = rows.get(it.url);
+    if (had && had.sig === sig) return had.el;
+    const row = mk("div", "row m"), info = mk("div", "info");
+    row.append(thumb(it), info); sizeLoad(it);
+    const name = mk("div", "t", rowName(it)), meta = mk("div", "meta", rowMeta(it));
+    it.rowEls = { name, meta }; info.append(name, meta, urlLine(it.url));
+    const note = (t, tone = "") => info.append(mk("div", `msg ${tone}`, t));
+    if (soundOnly(it)) note("Saving its video joins this sound in; save it here for the sound alone.");
+    const acts = mk("div", "acts"), running = job && !job.done && !job.err, k = `row:${it.url}`;
+    const copies = [
+      { label: "Copy address", run: () => { copy(it.url); status(it, "Address copied.", "ok"); } },
+      ...(it.kind === "yt" ? [] : [{ label: "Copy ffmpeg command", run: () => { copy(`ffmpeg -headers "Referer: ${it.referer || location.href}\\r\\n" -i "${it.url}" -c copy "${fileName(it, "mp4").replace(/\.\w+$/, "")}.mp4"`); status(it, "ffmpeg command copied.", "ok"); } }]),
+    ];
+    const ghostOnly = (why) => { note(why); acts.append(split("Ghost", () => sendGhost(it), copies, k, first)); };
+    if (it.kind === "yt") ghostOnly("YouTube locks its streams: Ghost saves it with yt-dlp.");
+    else if (it.kind === "dash") ghostOnly("DASH isn't saved in the browser: Ghost saves it, or copy the ffmpeg command.");
+    else if (it.kind === "hls" && it.err) note(`The playlist couldn't be read. ${friendly(it.err)}`, "err");
+    else if (it.kind === "hls" && !it.variants) note("Reading the playlist…");
+    else if (it.drm) { note(`DRM-protected (${it.drm}): it can't be saved, here or in Ghost.`, "err"); acts.append(split("Copy address", copies[0].run, copies.slice(1), k, false)); }
+    else {
+      if (it.kind === "hls") {
+        const s = mk("select"); s.setAttribute("aria-label", "Quality"); s.dataset.k = `${k}:q`;
+        // a stream's size is only known by fetching it: estimate it from the quality's bitrate and the length
+        const mbps = (v) => v.bw ? ` · ${(v.bw / 1e6).toFixed(1)} Mb/s${it.dur ? ` · ≈ ${bytes(v.bw * it.dur / 8)}` : ""}` : "";
+        it.variants.forEach((v, i) => s.append(new Option(v.res ? `${v.res.split("x")[1]}p${mbps(v)}` : v.url === it.url ? it.info || "Single quality"
+          : v.codecs && !/avc|hvc|hev|vp0?9|av01/i.test(v.codecs) ? `Sound only${mbps(v)}` : `Quality ${i + 1}${mbps(v)}`, String(i), false, i === (it.pick || 0))));
+        s.onchange = () => { it.pick = +s.value; draw(); }; s.disabled = !!running;
+        if (it.variants.length > 1 || !it.info) acts.append(s); else note(it.info);
+        const v = it.variants[it.pick || 0], est = v?.bw && it.dur ? v.bw * it.dur / 8 : 0;
+        if (est > 1.5e9) note(`About ${bytes(est)}: the browser holds all of it in memory while saving. Ghost is safer for one this big.`);
+        if (v?.audio && it.audioTracks?.some((a) => a.group === v.audio)) note("Its sound is a separate track: save that from the Audio tab.");
+      }
+      const save = () => { store.set("via", "save"); it.kind === "hls" ? runHls(it) : runDirect(it); };
+      const ghost = () => { store.set("via", "ghost"); sendGhost(it); };
+      const extra = it.kind === "hls" ? [{ sep: true }, { label: "Keep as .ts (no conversion)", check: !!it.asTs, run: () => { it.asTs = !it.asTs; draw(); say(it.asTs ? "Will keep .ts." : "Will convert to MP4."); } }] : [];
+      if (running) { const stop = btn("Stop", () => job.ctl.abort(), "b"); stop.dataset.k = `${k}:main`; acts.append(stop); }
+      else if (!canGhost(it)) acts.append(split("Save", save, [...copies, ...extra], k, first));
+      else acts.append(split(via === "ghost" ? "Ghost" : "Save", via === "ghost" ? ghost : save,
+        [{ label: "Save in the browser", run: save, on: via !== "ghost" }, { label: "Send to Ghost Downloader", run: ghost, on: via === "ghost" }, { sep: true }, ...copies, ...extra], k, first));
+    }
+    info.append(acts);
+    // one status line: the latest of the save and the last Ghost send or copy
+    const showJob = job && (running || !it.status || job.at >= it.status.at);
+    if (job) {
+      const pr = mk("div", "prog" + (job.err ? " err" : job.done ? "" : " on")), bar = mk("i"); bar.style.width = `${Math.round((job.frac || 0) * 100)}%`; pr.append(bar);
+      pr.setAttribute("aria-hidden", "true"); info.append(pr); job.bar = bar;
+    }
+    const line = mk("div", "msg"); info.append(line);
+    if (showJob) { line.className = "msg" + (job.err ? " err" : job.done ? " ok" : ""); line.textContent = job.err || job.text || ""; job.line = line; }
+    else if (it.status) { line.className = `msg ${it.status.tone}`; line.textContent = it.status.text; }
+    rows.set(it.url, { el: row, sig });
+    return row;
+  }
+  function status(it, text, tone = "", quiet) { it.status = { text, tone, at: Date.now() }; if (!quiet) say(text); draw(); }
+  function sendGhost(it) {
+    status(it, "Sending to Ghost…", "", true);
+    ghostSend(it).then(() => status(it, "Sent to Ghost Downloader.", "ok"), (e) => status(it, e.message, "err"));
+  }
+  function rowName(it) {
+    if (it.kind === "yt" || it.kind === "hls" || it.kind === "dash" || it.hlsAudio || BILI.test(it.url)) return it.title || document.title || "Stream";
+    return fileName(it, it.kind === "audio" ? "mp3" : "mp4");
+  }
+  // where it came from, cut in the middle so the file name at the end stays in view (the whole address is in the tooltip)
+  function urlLine(url) {
+    const u = mk("div", "u"); u.title = url;
+    let head = url, tail = "";
+    try { const x = new URL(url), p = x.pathname, i = p.lastIndexOf("/"); head = x.host + p.slice(0, i + 1); tail = decodeURIComponent(p.slice(i + 1)) + (x.search ? "?…" : ""); } catch {}
+    u.append(mk("span", "a", head), mk("span", "z", tail)); return u;
+  }
+
   // ---------- thumbnails ----------
-  // a file plays its own first frame (metadata only, so little is loaded); a stream gets one built from its first part at
-  // the lowest quality. Each element is made once and moved between redraws, so nothing reloads. Click to play / pause.
+  // a file plays its own first frame (metadata only, so little is loaded), and only once its row is scrolled into view;
+  // a stream gets one built from its first part at the lowest quality. Each is made once and kept. Click to play / pause.
   const clock = (d) => !isFinite(d) || !d ? "" : `${Math.floor(d / 60)}:${String(Math.round(d % 60)).padStart(2, "0")}`;
   // a file's size without downloading it: ask for its first byte and read the total from Content-Range (or the
   // Content-Length of a full answer, cut off at the headers)
@@ -829,23 +1094,26 @@
     const sound = pictureOnly && [...found.values()].find((x) => x !== it && x.meta?.loaded && !x.meta.w && x.size && sameAsset(x, it));
     return sound ? `≈ ${bytes(it.size + sound.size)} with sound` : `≈ ${bytes(it.size)}`;
   }
-  const retitle = (it) => { const t = it.thumb?.nextSibling?.querySelector(".t"); if (t) t.textContent = rowTitle(it); };
-  function rowTitle(it) {
+  const retitle = (it) => { if (it.rowEls) { it.rowEls.name.textContent = rowName(it); it.rowEls.meta.textContent = rowMeta(it); } };
+  function rowMeta(it) {
     const m = it.meta || {}, top = it.variants?.find((v) => v.res)?.res.split("x")[1];
     const w = it.kind === "hls" ? 0 : m.w || it.w, h = it.kind === "hls" ? 0 : m.h || it.h, d = it.kind === "hls" ? it.dur : m.d;
     const label = soundOnly(it) ? "Sound track" : it.kind === "yt" ? (it.shorts ? "YouTube Short" : "YouTube video") : { hls: "HLS stream", dash: "DASH stream", video: "Video file", audio: "Audio file" }[it.kind] || it.kind;
-    return [label, it.kind === "yt" && it.title, it.frame && "in a frame", w && h && `${w}×${h}`, top && `up to ${top}p`, clock(d), sizeText(it)].filter(Boolean).join(" · ");
+    return [label, it.frame && "in a frame", w && h && `${w}×${h}`, top && `up to ${top}p`, clock(d), sizeText(it)].filter(Boolean).join(" · ");
   }
+  const seen = typeof IntersectionObserver === "function" ? new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { seen.unobserve(e.target); e.target.load?.(); } }, { rootMargin: "200px" }) : null;
   function thumb(it) {
     if (it.thumb) return it.thumb;
-    const box = mk("div", "th"); box.dataset.note = it.kind === "dash" ? "No preview" : "Loading…"; it.thumb = box;
-    box.onclick = () => { const v = box.querySelector("video"); if (v) v.paused ? v.play().catch(() => {}) : v.pause(); };
-    if (it.kind === "video" || it.kind === "audio") preview(it, it.url);
-    if (it.kind === "yt") { const im = mk("img"); im.alt = ""; im.src = `https://i.ytimg.com/vi/${it.ytId}/mqdefault.jpg`; im.style.cssText = "width:100%;height:100%;object-fit:cover"; box.append(im); box.onclick = null; }
+    const playable = it.kind === "video" || it.kind === "audio" || it.kind === "hls";
+    const box = playable ? btn("", () => { const v = box.querySelector("video"); if (!v) return; if (v.paused) { v.play().catch(() => {}); box.setAttribute("aria-label", "Pause preview"); } else { v.pause(); box.setAttribute("aria-label", "Play preview"); } }, "th") : mk("div", "th");
+    if (playable) { box.setAttribute("aria-label", "Play preview"); box.dataset.k = `th:${it.url}`; } else box.setAttribute("aria-hidden", "true");
+    box.dataset.note = it.kind === "dash" ? "No preview" : "Loading…"; it.thumb = box;
+    if (it.kind === "video" || it.kind === "audio") { box.load = () => preview(it, it.url); if (seen) seen.observe(box); else box.load(); }
+    if (it.kind === "yt") { const im = mk("img"); im.alt = ""; im.src = `https://i.ytimg.com/vi/${it.ytId}/mqdefault.jpg`; im.style.cssText = "width:100%;height:100%;object-fit:cover"; box.append(im); }
     return box;
   }
   function preview(it, src) {
-    const v = mk("video"); v.muted = true; v.playsInline = true; v.loop = true; v.preload = "metadata";
+    const v = mk("video"); v.muted = true; v.playsInline = true; v.loop = true; v.preload = "metadata"; v.setAttribute("aria-hidden", "true"); v.tabIndex = -1;
     v.src = /^blob:/.test(src) || src.includes("#") ? src : `${src}#t=0.5`;
     v.onloadedmetadata = () => {
       if (/^blob:/.test(src) && isFinite(v.duration)) v.currentTime = Math.min(2, v.duration / 2); // streams often open on black
@@ -860,7 +1128,8 @@
     try {
       const vids = it.variants.filter((v) => v.res || v.url === it.url), v = vids[vids.length - 1] || it.variants[0];
       const media = parseMedia(await getRetry(v.url, "text", it.referer), v.url);
-      if (media.drm || !media.segs.length) throw 0;
+      if (media.drm) { it.drm = media.drm; onChange(); throw 0; } // said on the row before you press Save, not after
+      if (!media.segs.length) throw 0;
       const ctl = new AbortController(), seg = await decrypt(await getPart(media.segs[0], it.referer, ctl.signal), media.segs[0], it.referer, ctl.signal);
       const blob = media.map ? new Blob([await getPart(media.map, it.referer, ctl.signal), seg], { type: "video/mp4" }) : tsToMp4([seg]);
       if (!blob) throw 0;
@@ -873,52 +1142,34 @@
   function hlsLoad(it) {
     if (it.variants || it.loading || partOf.has(it.url)) return;
     it.loading = true;
-    {
-      getRetry(it.url, "text", it.referer).then((t) => {
-        const m = parseMaster(t, it.url);
-        it.variants = m.variants.length ? m.variants : [{ url: it.url, res: "", bw: 0 }]; it.audioTracks = m.audio;
-        for (const v of m.variants) if (v.url !== it.url) partOf.add(v.url);
-        if (!m.variants.length) { const md = parseMedia(t, it.url); it.dur = md.dur; it.info = `${md.segs.length} parts${md.dur ? ` · ${Math.round(md.dur / 60)} min` : ""}${md.live ? " · live (saves what's listed now)" : ""}${md.drm ? " · DRM" : ""}`; }
-        thumb(it); streamThumb(it);
-      }, (e) => { it.variants = []; it.err = e.message; }).finally(() => { it.loading = false; draw(); });
-    }
+    getRetry(it.url, "text", it.referer).then((t) => {
+      const m = parseMaster(t, it.url);
+      it.variants = m.variants.length ? m.variants : [{ url: it.url, res: "", bw: 0 }]; it.audioTracks = m.audio;
+      for (const v of m.variants) if (v.url !== it.url) partOf.add(v.url);
+      if (!m.variants.length) { const md = parseMedia(t, it.url); it.dur = md.dur; if (md.drm) it.drm = md.drm; it.info = `${md.segs.length} parts${md.dur ? ` · ${Math.round(md.dur / 60)} min` : ""}${md.live ? " · live (saves what's listed now)" : ""}`; }
+      if (it.audioTracks?.length && !it.audioAdded) { it.audioAdded = true; for (const a of it.audioTracks) found.set(a.url, { url: a.url, kind: "audio", referer: it.referer, title: `${it.title || document.title} ${a.name}`, hlsAudio: true }); }
+      thumb(it); streamThumb(it);
+    }, (e) => { it.variants = []; it.err = e.message; }).finally(() => { it.loading = false; draw(); });
   }
-  function hlsActs(it, acts, job) {
-    const running = job && !job.done && !job.err;
-    hlsLoad(it);
-    if (it.err) return acts.append(mk("span", "msg err", `Playlist unreadable: ${it.err}`));
-    if (!it.variants) return acts.append(mk("span", "msg", "Reading the playlist…"));
-    const s = mk("select"); s.setAttribute("aria-label", "Quality");
-    // a stream's size is only known by fetching it: estimate it from the quality's bitrate and the length
-    const mbps = (v) => v.bw ? ` · ${(v.bw / 1e6).toFixed(1)} Mb/s${it.dur ? ` · ≈ ${bytes(v.bw * it.dur / 8)}` : ""}` : "";
-    it.variants.forEach((v, i) => s.append(new Option(v.res ? `${v.res.split("x")[1]}p${mbps(v)}` : v.url === it.url ? it.info || "Single quality"
-      : v.codecs && !/avc|hvc|hev|vp0?9|av01/i.test(v.codecs) ? `Sound only${mbps(v)}` : `Quality ${i + 1}${mbps(v)}`, String(i), false, i === (it.pick || 0))));
-    s.onchange = () => { it.pick = +s.value; };
-    s.disabled = running; if (it.variants.length > 1 || !it.info) acts.append(s); else acts.append(mk("span", "msg", it.info));
-    const ts = mk("label", "msg"), cb = mk("input"); cb.type = "checkbox"; cb.checked = !!it.asTs; cb.onchange = () => { it.asTs = cb.checked; }; ts.append(cb, " keep .ts");
-    if (running) acts.append(btn("Stop", () => job.ctl.abort()));
-    else acts.append(btn("Save video", () => runHls(it), "b pri"), ts);
-    const v = it.variants[it.pick || 0];
-    if (v?.audio && it.audioTracks?.some((a) => a.group === v.audio)) acts.append(mk("span", "msg", "Sound is a separate track here: save it from the Audio tab or with ffmpeg."));
-    if (it.audioTracks?.length && !it.audioAdded) { it.audioAdded = true; for (const a of it.audioTracks) found.set(a.url, { url: a.url, kind: "audio", referer: it.referer, title: `${it.title || document.title} ${a.name}`, hlsAudio: true }); }
+  // a save shows a bar (parts done for a stream, MB of the total for a file), Stop, and the outcome with the file's name
+  function startJob(it) {
+    const ctl = new AbortController(), job = { ctl, frac: 0, text: "Starting…", at: Date.now() }; jobs.set(it.url, job); draw();
+    return { job, ui: { signal: ctl.signal, progress: (f, t) => { job.frac = f; job.text = t; if (job.bar?.isConnected) job.bar.style.width = `${Math.round(f * 100)}%`; if (job.line?.isConnected) job.line.textContent = t; } } };
+  }
+  function endJob(it, job, e, text) {
+    job.at = Date.now();
+    if (e) job.err = e.name === "AbortError" ? "Stopped." : friendly(e); else { job.done = true; job.frac = 1; job.text = text; }
+    say(`${rowName(it)}: ${job.err || job.text}`); draw();
   }
   async function runHls(it) {
-    const ctl = new AbortController(), job = { ctl, frac: 0, text: "Starting…" }; jobs.set(it.url, job); draw();
-    const ui = { signal: ctl.signal, progress: (f, t) => { job.frac = f; job.text = t; if (job.bar?.isConnected) { job.bar.style.width = `${Math.round(f * 100)}%`; job.row.lastChild.textContent = t; } } };
-    try {
-      const v = { ...it.variants[it.pick || 0], asTs: it.asTs };
-      const media = await saveHls(it, v, ui);
-      job.done = true; job.frac = 1; job.text = `Saved${media?.live ? " (a live stream: only what was listed so far)" : ""}.`;
-    } catch (e) { job.err = e.name === "AbortError" ? "Stopped." : e.message; }
-    draw();
+    const { job, ui } = startJob(it); lastSaved = "";
+    try { const media = await saveHls(it, { ...it.variants[it.pick || 0], asTs: it.asTs }, ui); endJob(it, job, null, `Saved as ${lastSaved || "a video"}${media?.live ? " (a live stream: only what was listed so far)" : ""}.`); }
+    catch (e) { endJob(it, job, e); }
   }
-  // a direct file's save, shown like a stream's: a bar with MB done of the total, Stop, and the outcome under it
   async function runDirect(it) {
-    const ctl = new AbortController(), job = { ctl, frac: 0, text: "Starting…" }; jobs.set(it.url, job); draw();
-    const ui = { signal: ctl.signal, progress: (f, t) => { job.frac = f; job.text = t; if (job.bar?.isConnected) { job.bar.style.width = `${Math.round(f * 100)}%`; job.row.lastChild.textContent = t; } } };
-    try { const note = await saveDirect(it, ui); job.done = true; job.frac = 1; job.text = note ? `${note}.` : "Saved."; }
-    catch (e) { job.err = e.name === "AbortError" ? "Stopped." : e.message; }
-    draw();
+    const { job, ui } = startJob(it); lastSaved = "";
+    try { const note = await saveDirect(it, ui); endJob(it, job, null, note ? `${note}.` : `Saved as ${lastSaved || rowName(it)}.`); }
+    catch (e) { endJob(it, job, e); }
   }
   function copy(t) { try { GM_setClipboard(t, "text"); } catch { navigator.clipboard?.writeText(t).catch(() => {}); } }
 
@@ -967,29 +1218,29 @@
     if (it.kind === "hls" || it.kind === "dash") return ghostAdd(it.url, it.referer, `${clean(it.title || document.title)}.mp4`);
     return ghostAdd(it.url, it.referer, fileName(it, it.kind === "image" ? "jpg" : it.kind === "audio" || soundOnly(it) ? "m4a" : "mp4"));
   }
-  function ghostBtn(it) {
-    const b = btn("Ghost", () => {
-      b.disabled = true; it.ghost = { text: "Sending to Ghost…" };
-      ghostSend(it).then(() => { it.ghost = { text: "Sent to Ghost Downloader.", ok: true }; }, (e) => { it.ghost = { text: e.message, err: true }; }).finally(() => draw());
-    });
-    b.title = "Download it with Ghost Downloader"; return b;
-  }
-  async function ghostEach(list, msg) {
-    let ok = 0, err = "";
-    for (const it of list) { msg.className = "msg"; msg.textContent = `Sending ${ok + 1} of ${list.length} to Ghost…`; try { await ghostSend(it); ok++; } catch (e) { err = e.message; break; } }
-    msg.className = "msg " + (err ? "err" : "ok"); msg.textContent = err ? (ok ? `${ok} sent, then: ${err}` : err) : `${ok} sent to Ghost Downloader.`;
+  // picked images to Ghost: one failure doesn't stop the rest, unless Ghost itself isn't there
+  async function ghostEach(list) {
+    let ok = 0, bad = 0, why = "";
+    for (const it of list) {
+      setBar(`Sending ${ok + bad + 1} of ${list.length} to Ghost…`);
+      try { await ghostSend(it); ok++; } catch (e) { bad++; why = e.message; if (/isn't answering|token/.test(why)) break; }
+    }
+    setBar(!bad ? `${ok} sent to Ghost Downloader.` : ok ? `${ok} sent to Ghost, ${bad} failed: ${why}` : why, bad ? "err" : "ok", true);
   }
 
   // ---------- start ----------
   const ready = () => { mount(); setTimeout(() => { try { scan(); } catch {} drawFab(); }, 1500); };
   if (document.body) ready(); else document.addEventListener("DOMContentLoaded", ready, { once: true });
   window.addEventListener("keydown", (e) => {
-    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyD") { e.preventDefault(); toggle(); }
-    else if (e.key === "Escape" && panel && document.activeElement === host) { e.preventDefault(); toggle(); } // only while the panel has focus
+    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyD" && e.shiftKey === !altD()) { e.preventDefault(); e.stopPropagation(); toggle(); }
   }, true);
   if (typeof GM_registerMenuCommand === "function") {
-    GM_registerMenuCommand("Open Omni Downloader (Alt+D)", () => toggle());
+    GM_registerMenuCommand(`Open Omni Downloader (${keyNames().join("+")})`, () => toggle());
     GM_registerMenuCommand("Show / hide the floating button", () => { store.set("fab", !store.get("fab", true)); drawFab(); });
+    GM_registerMenuCommand("Shortcut: switch between Alt+Shift+D and Alt+D", () => {
+      store.set("key", altD() ? "alt+shift+d" : "alt+d");
+      alert(`Omni Downloader now opens with ${keyNames().join("+")}.${altD() ? " (Alt+D no longer moves to the address bar on pages.)" : ""}`);
+    });
     GM_registerMenuCommand("Ghost Downloader: port and token", () => {
       const c = ghostCfg(), port = prompt("Ghost Downloader's aria2 RPC port (Settings → aria2 RPC):", String(c.port));
       if (port == null) return;
