@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.9.2
+// @version      1.9.3
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -617,7 +617,15 @@
     return g;
   };
   const fold = (t) => String(t || "").toLowerCase();
-  const svg = (name) => { const t = document.createElement("template"); t.innerHTML = ICON[name]; return t.content.firstChild; };
+  // YouTube and other Google sites enforce Trusted Types: an HTML string set as innerHTML throws there, so the icons go
+  // through a policy of the script's own (its strings are fixed, written here). Without Trusted Types it's a plain string.
+  const trusted = (() => { try { return W.trustedTypes?.createPolicy("omni-downloader", { createHTML: (s) => s }); } catch { return null; } })();
+  const svg = (name) => {
+    const t = document.createElement("template");
+    try { t.innerHTML = trusted ? trusted.createHTML(ICON[name]) : ICON[name]; }
+    catch { return document.createElement("span"); } // a page that allows no policy of ours: no icon, but everything else works
+    return t.content.firstChild;
+  };
   function mount() {
     if (host || !document.body) return;
     host = mk("div"); host.id = "omni-downloader"; root = host.attachShadow({ mode: "closed" });
@@ -654,7 +662,8 @@
     const shut = btn("", () => toggle(), "shut"); const xs = svg("x"); xs.classList.remove("x"); shut.append(xs); shut.title = "Close (Esc)"; shut.setAttribute("aria-label", "Close");
     top.append(svg("find"), q, again, shut);
     main = mk("div", "main");
-    const foot = mk("div", "foot"); foot.innerHTML = "<span><kbd>Alt</kbd> <kbd>D</kbd> open / close</span><span><kbd>Esc</kbd> close</span><span>Double-click an image to save it</span>";
+    const foot = mk("div", "foot"), keys = (...k) => { const sp = mk("span"); k.forEach((x, i) => sp.append(i < k.length - 1 ? mk("kbd", null, x) : x, i < k.length - 2 ? " " : "")); return sp; };
+    foot.append(keys("Alt", "D", " open / close"), keys("Esc", " close"), mk("span", null, "Double-click an image to save it"));
     // the page itself, for sites Ghost reads on its own (YouTube and Bilibili through yt-dlp and its own support)
     const fmsg = mk("span", "msg"), page = btn("Page to Ghost", () => {
       page.disabled = true; fmsg.className = "msg"; fmsg.textContent = "Sending…";
