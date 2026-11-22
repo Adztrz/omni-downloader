@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.12
+// @version      1.13
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -218,6 +218,7 @@
     }
   }
   let lastSaved = ""; // the name of the file just saved, for the row's "Saved as …"
+  const saveFile = (blob, name) => saveBlob(blob, name);
   function saveBlob(blob, name) {
     lastSaved = name;
     const u = URL.createObjectURL(blob), a = document.createElement("a");
@@ -261,12 +262,29 @@
   // are copied and only track numbers, timescales and offsets are rewritten. Fragmented MP4 (what DASH serves) and plain
   // MP4 with one mdat are both handled; anything else is saved as it came.
   async function saveVideo(it, name, ui = quiet) {
+    const r = await saveVideoWhole(it, name, ui, it.trim);
+    return r;
+  }
+  async function saveVideoWhole(it, name, ui, trim) {
+    let untrimmed = false;
+    const saveBlob = (blob, nm) => { // the same save, cut first when a stretch is chosen and the file allows it
+      if (!trim || !/^video|^audio\/mp4/.test(blob.type)) return saveFile(blob, nm);
+      return blob.arrayBuffer().then((buf) => {
+        const cut = trimFrag(new Uint8Array(buf), trim.start, trim.end);
+        if (cut) return saveFile(new Blob(cut, { type: blob.type }), nm.replace(/(\.\w+)$/, ` ${trimName(trim)}$1`));
+        untrimmed = true; saveFile(blob, nm);
+      });
+    };
+    const note = await saveVideoInner(it, name, ui, saveBlob);
+    return untrimmed ? `${note ? note + ". " : ""}Saved whole: a plain MP4 can't be cut in the browser. Copy the ffmpeg command for an exact cut` : note;
+  }
+  async function saveVideoInner(it, name, ui, saveBlob) {
     // where the sound is likely a file of its own (an Instagram or Bilibili id), the picture fills the first half of the bar
     const split = !!assetKey(it.url) && 0.5;
     const V = new Uint8Array(await getRetry(it.url, "buffer", it.referer, ui.signal, 3, fileProg(ui, split ? "Picture" : "", 0, split || 1))), vi = mp4Info(V);
     const has = (info, h) => !!info?.traks.some((t) => t.handler === h);
-    if (vi && !has(vi, "vide") && has(vi, "soun")) { saveBlob(new Blob([V], { type: "audio/mp4" }), name.replace(/\.\w+$/, "") + ".m4a"); return "Saved (sound only)"; }
-    if (!has(vi, "vide") || has(vi, "soun")) { saveBlob(new Blob([V], { type: "video/mp4" }), name); return ""; }
+    if (vi && !has(vi, "vide") && has(vi, "soun")) { await saveBlob(new Blob([V], { type: "audio/mp4" }), name.replace(/\.\w+$/, "") + ".m4a"); return "Saved (sound only)"; }
+    if (!has(vi, "vide") || has(vi, "soun")) { await saveBlob(new Blob([V], { type: "video/mp4" }), name); return ""; }
     ui.progress(split || 0, "Finding its sound…");
     const pair = await soundFor(it);
     if (pair) {
@@ -274,12 +292,12 @@
         const A = new Uint8Array(await getRetry(pair.url, "buffer", pair.referer || it.referer, ui.signal, 3, fileProg(ui, "Sound", split || 0, split || 1))), ai = mp4Info(A);
         if (has(ai, "soun") && !has(ai, "vide") && ai.frag === vi.frag) {
           ui.progress(1, "Joining picture and sound…"); await new Promise((r) => setTimeout(r, 30));
-          saveBlob(new Blob(vi.frag ? joinFragmented(V, vi, A, ai) : joinPlain(V, vi, A, ai), { type: "video/mp4" }), name);
+          await saveBlob(new Blob(vi.frag ? joinFragmented(V, vi, A, ai) : joinPlain(V, vi, A, ai), { type: "video/mp4" }), name);
           return "Saved with sound";
         }
       } catch (e) { if (e.name === "AbortError") throw e; console.warn("[omni] joining picture and sound failed:", e); }
     }
-    saveBlob(new Blob([V], { type: "video/mp4" }), name);
+    await saveBlob(new Blob([V], { type: "video/mp4" }), name);
     return pair ? "Saved without sound (couldn't join)" : "Saved without sound: play the video so its sound loads, then save again";
   }
   // the sound file for a picture-only file: same Instagram asset id or Bilibili cid, else the closest length (within a second)
@@ -429,7 +447,7 @@
     return { variants, audio };
   }
   function parseMedia(text, base) {
-    const segs = []; let key = null, map = null, seq = 0, dur = 0, range = null, lastEnd = 0, drm = "";
+    const segs = []; let key = null, map = null, seq = 0, dur = 0, range = null, lastEnd = 0, drm = "", len = 0;
     const byterange = (v) => { const [len, off] = String(v).split("@").map(Number); const start = Number.isFinite(off) ? off : lastEnd; lastEnd = start + len; return [start, start + len - 1]; };
     for (const raw of text.split(/\r?\n/)) {
       const l = raw.trim(); if (!l) continue;
@@ -440,9 +458,9 @@
         else if (a.METHOD === "AES-128" && (!a.KEYFORMAT || a.KEYFORMAT === "identity")) key = { uri: abs(a.URI, base), iv: a.IV || null };
         else drm = a.KEYFORMAT || a.METHOD;
       } else if (l.startsWith("#EXT-X-MAP:")) { const a = attrs(l.slice(11)); map = { url: abs(a.URI, base), range: a.BYTERANGE ? byterange(a.BYTERANGE) : null }; lastEnd = 0; }
-      else if (l.startsWith("#EXTINF:")) dur += parseFloat(l.slice(8)) || 0;
+      else if (l.startsWith("#EXTINF:")) { len = parseFloat(l.slice(8)) || 0; dur += len; }
       else if (l.startsWith("#EXT-X-BYTERANGE:")) range = byterange(l.slice(17));
-      else if (!l.startsWith("#")) { segs.push({ url: abs(l, base), key, seqNo: seq + segs.length, range }); range = null; }
+      else if (!l.startsWith("#")) { segs.push({ url: abs(l, base), key, seqNo: seq + segs.length, range, t: dur - len, d: len }); range = null; len = 0; }
     }
     return { segs, map, dur, live: !/#EXT-X-ENDLIST/.test(text), drm };
   }
@@ -492,10 +510,14 @@
     const media = parseMedia(await getRetry(choice.url, "text", ref, signal), choice.url);
     if (media.drm) throw new Error(`This stream is DRM-protected (${media.drm}): it can't be saved.`);
     if (!media.segs.length) throw new Error("The playlist has no segments.");
+    const trim = choice.trim && trimSegs(media, choice.trim);
     const parts = await getSegments(media, ref, signal, (d, n) => ui.progress(d / n, `${d} / ${n} parts`));
     if (media.map) parts.unshift(await getPart(media.map, ref, signal));
-    const base = clean(it.title || document.title) + (choice.res ? ` ${choice.res.split("x")[1]}p` : "");
-    if (media.map) return saveBlob(new Blob(parts, { type: "video/mp4" }), `${base}.mp4`); // fMP4: already MP4 pieces
+    const base = clean(it.title || document.title) + (choice.res ? ` ${choice.res.split("x")[1]}p` : "") + (trim ? ` ${trimName(trim)}` : "");
+    if (media.map) { // fMP4: already MP4 pieces; a trimmed part is retimed to start at 0
+      const cut = trim && trimFrag(concat(parts.map((x) => new Uint8Array(x))), -Infinity, Infinity);
+      saveBlob(new Blob(cut || parts, { type: "video/mp4" }), `${base}.mp4`); return media;
+    }
     ui.progress(1, "Joining into MP4…"); await new Promise((r) => setTimeout(r, 30));
     const mp4 = choice.asTs ? null : tsToMp4(parts);
     if (mp4) saveBlob(mp4, `${base}.mp4`); else saveBlob(new Blob(parts, { type: "video/mp2t" }), `${base}.ts`);
@@ -506,9 +528,71 @@
   async function saveHlsAudio(it, ui = quiet) {
     const signal = ui.signal || new AbortController().signal, media = parseMedia(await getRetry(it.url, "text", it.referer, signal), it.url);
     if (media.drm) throw new Error("DRM-protected");
+    const trim = it.trim && trimSegs(media, it.trim);
     const parts = await getSegments(media, it.referer, signal, (d, n) => ui.progress(d / n, `${d} / ${n} parts`));
     if (media.map) parts.unshift(await getPart(media.map, it.referer, signal));
-    saveBlob(new Blob(parts), `${clean(it.title)}.${media.map ? "m4a" : "aac"}`);
+    saveBlob(new Blob(parts), `${clean(it.title)}${trim ? ` ${trimName(trim)}` : ""}.${media.map ? "m4a" : "aac"}`);
+  }
+
+  // ---------- trimming before download ----------
+  // A stream is cut by its parts: only the parts that overlap the chosen stretch are fetched, so a few minutes of a long
+  // video cost a few minutes of download. The cut lands on part edges (usually within 2-6 seconds). A fragmented MP4 is
+  // cut the same way by its fragments, after download. Nothing is re-encoded. A plain MP4 can't be cut like that: it's
+  // saved whole, and the ffmpeg command (with the times) cuts it exactly.
+  function trimSegs(media, trim) {
+    const keep = media.segs.filter((s) => s.t + s.d > trim.start && s.t < trim.end);
+    if (!keep.length) throw new Error("No part of the stream falls inside that stretch. Check the start and end times.");
+    media.segs = keep; return { start: keep[0].t, end: keep[keep.length - 1].t + keep[keep.length - 1].d };
+  }
+  const concat = (arrs) => { const out = new Uint8Array(arrs.reduce((a, x) => a + x.length, 0)); let o = 0; for (const x of arrs) { out.set(x, o); o += x.length; } return out; };
+  const hms = (s) => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return h ? `${h}:${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}` : `${m}:${String(x).padStart(2, "0")}`; };
+  const trimName = (t) => `${hms(t.start)}-${hms(t.end)}`.replace(/:/g, ".");
+  // "1:02:10", "62:10", "3730", "1:02:10.5" → seconds
+  const parseTime = (v) => { const p = String(v).trim().split(":"); if (!p[0] || p.length > 3 || p.some((x) => !/^\d+(\.\d+)?$/.test(x))) return NaN; return p.reduce((a, x) => a * 60 + +x, 0); };
+  function trimFrag(u, start, end) {
+    const info = mp4Info(u); if (!info?.frag) return null;
+    const d = dv(u), scales = Object.fromEntries(info.traks.map((t) => [trackId(u, t.box), mdhdScale(u, t.box)]));
+    const frs = []; let cur = null;
+    for (const b of info.top) {
+      if (b.type === "moof") {
+        let t = Infinity;
+        for (const traf of kids(u, b).filter((x) => x.type === "traf")) {
+          const id = d.getUint32(find(u, traf, "tfhd").body + 4), tf = find(u, traf, "tfdt");
+          if (tf) t = Math.min(t, getN(d, tf.body + 4, u[tf.body] === 1) / (scales[id] || 1));
+        }
+        frs.push(cur = { moof: b, mdats: [], t: isFinite(t) ? t : frs.length });
+      } else if (b.type === "mdat" && cur) cur.mdats.push(b);
+    }
+    const starts = [...new Set(frs.map((f) => f.t))].sort((a, b) => a - b), next = (t) => starts.find((x) => x > t) ?? Infinity;
+    const keep = frs.filter((f) => f.t < end && next(f.t) > start);
+    if (!keep.length) return null;
+    const base = Math.min(...keep.map((f) => f.t)), last = Math.max(...keep.map((f) => next(f.t)));
+    const moov = u.slice(info.moov.start, info.moov.end), mroot = boxes(moov)[0], mehd = find(moov, mroot, "mvex/mehd");
+    if (mehd) setN(dv(moov), mehd.body + 4, moov[mehd.body] === 1, isFinite(last) ? (Math.min(last, end) - base) * mvhdScale(moov, mroot) : 0);
+    const ftyp = info.top.find((b) => b.type === "ftyp"), parts = ftyp ? [u.subarray(ftyp.start, ftyp.end), moov] : [moov];
+    let pos = parts.reduce((a, x) => a + x.length, 0), seq = 0;
+    for (const f of keep) {
+      const m = u.slice(f.moof.start, f.moof.end), md = dv(m), root = boxes(m)[0];
+      md.setUint32(find(m, root, "mfhd").body + 4, ++seq);
+      for (const traf of kids(m, root).filter((b) => b.type === "traf")) {
+        const tf = find(m, traf, "tfhd"), flags = md.getUint32(tf.body) & 0xffffff, id = md.getUint32(tf.body + 4), dt = find(m, traf, "tfdt");
+        if (dt) { const w = m[dt.body] === 1; setN(md, dt.body + 4, w, Math.max(0, getN(md, dt.body + 4, w) - base * (scales[id] || 1))); }
+        if (flags & 1) setN(md, tf.body + 8, true, getN(md, tf.body + 8, true) - f.moof.start + pos); // absolute offsets move with the fragment
+      }
+      parts.push(m); pos += m.length;
+      for (const b of f.mdats) { parts.push(u.subarray(b.start, b.end)); pos += b.end - b.start; }
+    }
+    return parts;
+  }
+  // whether a file is fragmented, from its first 256 KB (a plain MP4 keeps its index whole, often at the end)
+  function fragKind(it) {
+    if (it.fragP) return it.fragP;
+    const read = (buf) => { const u = new Uint8Array(buf), top = boxes(u), moov = top.find((b) => b.type === "moov"); return top.some((b) => b.type === "moof") || (moov && moov.end <= u.length && find(u, moov, "mvex")) ? "frag" : "plain"; };
+    it.fragP = (typeof GM_xmlhttpRequest === "function"
+      ? new Promise((ok, no) => GM_xmlhttpRequest({ method: "GET", url: it.url, responseType: "arraybuffer", headers: { Range: "bytes=0-262143", Referer: it.referer || location.href }, timeout: 20000,
+        onload: (r) => r.status < 300 ? ok(r.status === 206 ? r.response : r.response.slice(0, 262144)) : no(new Error(`HTTP ${r.status}`)), onerror: () => no(new Error("network error")), ontimeout: () => no(new Error("timed out")) }))
+      : fetch(it.url, { headers: { Range: "bytes=0-262143" } }).then((r) => r.arrayBuffer())).then(read, () => "unknown");
+    return it.fragP;
   }
 
   // ---------- the panel ----------
@@ -624,6 +708,15 @@
     .pill button { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 6px; border: 0; border-radius: 7px; background: none; color: inherit; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
     .pill button:hover { background: var(--raised); } .pill button svg { width: 22px; height: 22px; flex: none; }
     .pill small { color: var(--muted); font: 12px "Omni Mono", "JetBrains Mono", ui-monospace, monospace; padding-right: 6px; }
+    .trim { display: grid; gap: 8px; margin-top: 4px; padding: 10px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
+    .trim .tr { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+    .trim .tf { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .trim input { width: 92px; height: 30px; padding: 0 8px; border: 0; border-radius: 8px; background: var(--card); color: var(--paper); font: 13px "Omni Mono", "JetBrains Mono", ui-monospace, monospace; box-shadow: inset 0 0 0 1px var(--edge); }
+    .trim input[aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--red); }
+    button.b.sm { height: 30px; padding: 0 10px; font-size: 12px; }
+    .trimline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font: 12px "Omni Mono", "JetBrains Mono", ui-monospace, monospace; color: var(--bone); }
+    button.lnk { padding: 0; border: 0; background: none; color: var(--body); font: 12px "Omni Inter", Inter, ui-sans-serif, system-ui, sans-serif; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+    button.lnk:hover { color: var(--paper); }
     .row.flash { animation: flash 1.6s var(--out); }
     @keyframes flash { from { background: #262a2b; box-shadow: inset 0 0 0 1px var(--bone); } }
     @media (prefers-reduced-motion: reduce) { .pill, .row.flash { animation: none; } }
@@ -997,7 +1090,7 @@
   function rowOf(it, first) {
     const job = jobs.get(it.url), via = store.get("via", "save");
     const sig = JSON.stringify([first, via, it.kind, soundOnly(it), !!it.variants, it.variants?.length, it.pick, !!it.asTs, it.err, it.drm, it.dur,
-      job && [job.at, !!job.done, job.err], it.status?.at]);
+      job && [job.at, !!job.done, job.err], it.status?.at, it.trim, it.trimOpen, it.frag]);
     const had = rows.get(it.url);
     if (had && had.sig === sig) return had.el;
     const row = mk("div", "row m"), info = mk("div", "info");
@@ -1009,7 +1102,7 @@
     const acts = mk("div", "acts"), running = job && !job.done && !job.err, k = `row:${it.url}`;
     const copies = [
       { label: "Copy address", run: () => { copy(it.url); status(it, "Address copied.", "ok"); } },
-      ...(it.kind === "yt" ? [] : [{ label: "Copy ffmpeg command", run: () => { copy(`ffmpeg -headers "Referer: ${it.referer || location.href}\\r\\n" -i "${it.url}" -c copy "${fileName(it, "mp4").replace(/\.\w+$/, "")}.mp4"`); status(it, "ffmpeg command copied.", "ok"); } }]),
+      ...(it.kind === "yt" ? [] : [{ label: it.trim ? "Copy ffmpeg command (exact cut)" : "Copy ffmpeg command", run: () => { copy(ffmpegCmd(it)); status(it, it.trim ? "ffmpeg command copied: it cuts to the exact frame." : "ffmpeg command copied.", "ok"); } }]),
     ];
     const ghostOnly = (why) => { note(why); acts.append(split("Ghost", () => sendGhost(it), copies, k, first)); };
     if (it.kind === "yt") ghostOnly("YouTube locks its streams: Ghost saves it with yt-dlp.");
@@ -1032,13 +1125,22 @@
       }
       const save = () => { store.set("via", "save"); it.kind === "hls" ? runHls(it) : runDirect(it); };
       const ghost = () => { store.set("via", "ghost"); sendGhost(it); };
-      const extra = it.kind === "hls" ? [{ sep: true }, { label: "Keep as .ts (no conversion)", check: !!it.asTs, run: () => { it.asTs = !it.asTs; draw(); say(it.asTs ? "Will keep .ts." : "Will convert to MP4."); } }] : [];
+      const extra = [
+        ...(trimmable(it) ? [{ sep: true }, { label: it.trim ? "Change the trim…" : "Trim before saving…", run: () => openTrim(it) }] : []),
+        ...(it.kind === "hls" ? [{ sep: true }, { label: "Keep as .ts (no conversion)", check: !!it.asTs, run: () => { it.asTs = !it.asTs; draw(); say(it.asTs ? "Will keep .ts." : "Will convert to MP4."); } }] : []),
+      ];
       if (running) { const stop = btn("Stop", () => job.ctl.abort(), "b"); stop.dataset.k = `${k}:main`; acts.append(stop); }
       else if (!canGhost(it)) acts.append(split("Save", save, [...copies, ...extra], k, first));
       else acts.append(split(via === "ghost" ? "Ghost" : "Save", via === "ghost" ? ghost : save,
         [{ label: "Save in the browser", run: save, on: via !== "ghost" }, { label: "Send to Ghost Downloader", run: ghost, on: via === "ghost" }, { sep: true }, ...copies, ...extra], k, first));
     }
     info.append(acts);
+    if (it.trimOpen) info.append(trimEditor(it));
+    else if (it.trim) {
+      const t = mk("div", "trimline"); t.append(mk("span", null, `Trimmed ${hms(it.trim.start)} – ${hms(it.trim.end)}${trimEstimate(it)}`));
+      const ch = btn("Change", () => openTrim(it), "lnk"); ch.dataset.k = `${k}:trim`; const cl = btn("Clear", () => { it.trim = null; draw(); say("Trim cleared: Save gets the whole video."); }, "lnk"); cl.dataset.k = `${k}:clear`;
+      t.append(ch, cl); info.append(t);
+    }
     // one status line: the latest of the save and the last Ghost send or copy
     const showJob = job && (running || !it.status || job.at >= it.status.at);
     if (job) {
@@ -1046,7 +1148,7 @@
       pr.setAttribute("aria-hidden", "true"); info.append(pr); job.bar = bar;
     }
     const line = mk("div", "msg"); info.append(line);
-    if (showJob) { line.className = "msg" + (job.err ? " err" : job.done ? " ok" : ""); line.textContent = job.err || job.text || ""; job.line = line; }
+    if (showJob) { line.className = "msg" + (job.err ? " err" : job.done && !job.warn ? " ok" : ""); line.textContent = job.err || job.text || ""; job.line = line; }
     else if (it.status) { line.className = `msg ${it.status.tone}`; line.textContent = it.status.text; }
     rows.set(it.url, { el: row, sig });
     return row;
@@ -1055,6 +1157,59 @@
   function sendGhost(it) {
     status(it, "Sending to Ghost…", "", true);
     ghostSend(it).then(() => status(it, "Sent to Ghost Downloader.", "ok"), (e) => status(it, e.message, "err"));
+  }
+  // ---------- the trim editor ----------
+  const trimmable = (it) => (it.kind === "hls" || it.hlsAudio || it.kind === "video") && /^https?:/.test(it.url);
+  const lengthOf = (it) => it.kind === "hls" ? it.dur : it.meta?.d || it.dur || 0;
+  function trimEstimate(it) {
+    const t = it.trim, len = t.end - t.start, v = it.variants?.[it.pick || 0], all = lengthOf(it);
+    const size = v?.bw ? v.bw * len / 8 : it.size && all ? it.size * len / all : 0;
+    return ` · ${hms(len)}${size ? ` · ≈ ${bytes(size)}` : ""}`;
+  }
+  function ffmpegCmd(it) {
+    const out = `${fileName(it, "mp4").replace(/\.\w+$/, "")}${it.trim ? ` ${trimName(it.trim)}` : ""}.mp4`, src = it.kind === "hls" && it.variants?.length ? it.variants[it.pick || 0].url : it.url;
+    const head = `ffmpeg -headers "Referer: ${it.referer || location.href}\\r\\n"`;
+    // with a trim: seek before reading (fast), then re-encode so the cut lands on the exact frame
+    return it.trim ? `${head} -ss ${it.trim.start} -to ${it.trim.end} -i "${src}" -c:v libx264 -crf 18 -preset veryfast -c:a aac -b:a 192k "${out}"` : `${head} -i "${src}" -c copy "${out}"`;
+  }
+  // the page's player for an item: the one Omni matches to it, else the one playing, else the biggest on screen
+  function playerFor(it) {
+    const vs = [...document.querySelectorAll("video, audio")].filter((v) => v.duration);
+    return vs.find((v) => itemFor(v) === it) || vs.find((v) => !v.paused) || vs.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0] || null;
+  }
+  function openTrim(it) {
+    it.trimOpen = true; it.trimDraft = { start: it.trim?.start ?? 0, end: it.trim?.end ?? (lengthOf(it) || 60) };
+    if (it.kind === "video" && !it.frag) fragKind(it).then((k) => { it.frag = k; draw(); });
+    draw(); main.querySelector(`[data-k="${CSS.escape(`row:${it.url}:start`)}"]`)?.focus();
+  }
+  function trimEditor(it) {
+    const k = `row:${it.url}`, d = it.trimDraft, box = mk("div", "trim"); box.setAttribute("role", "group"); box.setAttribute("aria-label", "Trim before saving");
+    const err = mk("div", "msg err");
+    const field = (label, key) => {
+      const l = mk("label", "tf"), inp = mk("input"); inp.value = hms(d[key]); inp.inputMode = "decimal"; inp.dataset.k = `${k}:${key}`; inp.setAttribute("aria-label", `${label}, hours:minutes:seconds`);
+      inp.onchange = () => { const v = parseTime(inp.value); if (isNaN(v)) { inp.setAttribute("aria-invalid", "true"); err.textContent = `${label}: write it like 1:02:10 or 62:10.`; return; } inp.removeAttribute("aria-invalid"); d[key] = v; err.textContent = ""; };
+      inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); inp.onchange(); apply(); } };
+      const now = btn("Now", () => {
+        const pl = playerFor(it); if (!pl) { err.textContent = "No player on the page to read the time from: type it instead."; return; }
+        d[key] = pl.currentTime; inp.value = hms(pl.currentTime); err.textContent = ""; say(`${label} set to ${hms(pl.currentTime)}.`);
+      }, "b sm"); now.dataset.k = `${k}:${key}:now`; now.title = "Use the page's player's current time"; now.setAttribute("aria-label", `${label}: use the player's current time`);
+      l.append(mk("span", null, label), inp, now); return l;
+    };
+    const apply = () => {
+      const all = lengthOf(it), end = all ? Math.min(d.end, all) : d.end;
+      if (!(end > d.start + 0.5)) { err.textContent = "The end has to come after the start."; return; }
+      it.trim = { start: d.start, end }; it.trimOpen = false; draw();
+      say(`Trimmed to ${hms(d.start)} – ${hms(end)}. Save gets only that part.`);
+      main.querySelector(`[data-k="${CSS.escape(`${k}:main`)}"]`)?.focus();
+    };
+    const done = btn("Use this stretch", apply, "b pri sm"); done.dataset.k = `${k}:apply`;
+    const cancel = btn("Cancel", () => { it.trimOpen = false; draw(); main.querySelector(`[data-k="${CSS.escape(`${k}:main`)}"]`)?.focus(); }, "b sm"); cancel.dataset.k = `${k}:cancel`;
+    const row = mk("div", "tr"); row.append(field("Start", "start"), field("End", "end"));
+    const btns = mk("div", "tr"); btns.append(done, cancel);
+    const note = it.kind === "video" ? mk("div", "msg", it.frag === "plain" ? "This is a plain MP4: it can't be cut in the browser, so Save gets the whole file. Copy the ffmpeg command for an exact cut."
+      : it.frag === "frag" ? "Cut at the nearest fragment edges, a few seconds either side." : "Checking whether this file can be cut here…")
+      : mk("div", "msg", "Only the parts inside this stretch are downloaded. The cut lands on part edges, a few seconds either side.");
+    box.append(row, note, btns, err); return box;
   }
   function rowName(it) {
     if (it.kind === "yt" || it.kind === "hls" || it.kind === "dash" || it.hlsAudio || BILI.test(it.url)) return it.title || document.title || "Stream";
@@ -1169,12 +1324,12 @@
   }
   function endJob(it, job, e, text) {
     job.at = Date.now();
-    if (e) job.err = e.name === "AbortError" ? "Stopped." : friendly(e); else { job.done = true; job.frac = 1; job.text = text; }
+    if (e) job.err = e.name === "AbortError" ? "Stopped." : friendly(e); else { job.done = true; job.frac = 1; job.text = text; job.warn = /whole|without sound/i.test(text); }
     say(`${rowName(it)}: ${job.err || job.text}`); draw();
   }
   async function runHls(it) {
     const { job, ui } = startJob(it); lastSaved = "";
-    try { const media = await saveHls(it, { ...it.variants[it.pick || 0], asTs: it.asTs }, ui); endJob(it, job, null, `Saved as ${lastSaved || "a video"}${media?.live ? " (a live stream: only what was listed so far)" : ""}.`); }
+    try { const media = await saveHls(it, { ...it.variants[it.pick || 0], asTs: it.asTs, trim: it.trim }, ui); endJob(it, job, null, `Saved as ${lastSaved || "a video"}${media?.live ? " (a live stream: only what was listed so far)" : ""}.`); }
     catch (e) { endJob(it, job, e); }
   }
   async function runDirect(it) {

@@ -10,6 +10,13 @@ Point at a video or an audio player on the page and a **Download this media** bu
 
 Each file or stream has one main button, **Save** or **Ghost**, and a **▾** beside it with the rest: save in the browser, send to Ghost Downloader, copy the address, copy an ffmpeg command, and for HLS *keep as .ts*. Whichever of Save and Ghost you pick from the ▾ becomes the main button from then on.
 
+**Trim before saving** (in the ▾ of a stream or video file) sets a start and an end. Type the times, or press **Now** beside each to take the time from the page's player while you scrub it. Then:
+- an **HLS stream** downloads only the parts inside that stretch, so a few minutes of a long video cost a few minutes of download. The cut lands on part edges, usually within 2-6 seconds;
+- a **fragmented MP4** (what DASH players and Instagram serve) is cut at its fragment edges after download;
+- a **plain MP4** can't be cut in the browser without re-encoding, so it's saved whole and the row says so. Its **Copy ffmpeg command (exact cut)** cuts to the exact frame.
+
+Nothing is re-encoded in the browser, and the saved file's name carries the times (`… 0.20-0.30.mp4`).
+
 It works from the keyboard: ↓ from the filter goes into the list, ↑ and ↓ move between rows, ← and → between tabs and between images, Space selects an image and Enter saves it. Saves, Ghost sends, copies and errors are announced to screen readers.
 
 ## What it does
