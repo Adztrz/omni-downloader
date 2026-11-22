@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.9.3
+// @version      1.9.4
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -16,6 +16,7 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_cookie
 // @grant        unsafeWindow
 // @connect      *
 // @connect      127.0.0.1
@@ -919,9 +920,21 @@
     return new Promise((resolve, reject) => GM_xmlhttpRequest({ method: "POST", url, data, anonymous: true, timeout: 8000, headers: { "Content-Type": "application/json" },
       onload: (r) => { try { resolve(read(r.responseText)); } catch (e) { reject(e); } }, onerror: () => reject(down()), ontimeout: () => reject(down()) }));
   }
-  function ghostAdd(url, referer, name) {
-    const header = [`Referer: ${referer || location.href}`, `User-Agent: ${navigator.userAgent}`];
-    try { if (new URL(url).origin === location.origin && document.cookie) header.push(`Cookie: ${document.cookie}`); } catch {}
+  // the browser's cookies for an address. Cloudflare's pass (cf_clearance) and most sign-ins are HttpOnly, which the page
+  // can't read, so they come from Tampermonkey's GM_cookie (Tampermonkey → Settings → Security → "Allow scripts to access
+  // cookies": All). Without it, the page's own readable cookies, for its own files only.
+  function cookiesFor(url) {
+    let own = ""; try { if (new URL(url).origin === location.origin) own = document.cookie; } catch {}
+    const gc = typeof GM_cookie !== "undefined" ? GM_cookie : null;
+    if (!gc?.list) return Promise.resolve(own);
+    return new Promise((resolve) => {
+      setTimeout(() => resolve(own), 3000);
+      try { gc.list({ url }, (list, err) => resolve(!err && list?.length ? list.map((c) => `${c.name}=${c.value}`).join("; ") : own)); } catch { resolve(own); }
+    });
+  }
+  async function ghostAdd(url, referer, name) {
+    const header = [`Referer: ${referer || location.href}`, `User-Agent: ${navigator.userAgent}`], cookie = await cookiesFor(url);
+    if (cookie) header.push(`Cookie: ${cookie}`);
     return ghostCall("aria2.addUri", [[url], name ? { header, out: name } : { header }]);
   }
   // what to hand over for one row: the chosen quality of a stream, the page for Bilibili, else the file
