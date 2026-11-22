@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.11
+// @version      1.12
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -517,7 +517,7 @@
   const css = `
     :host { all: initial; }
     * { box-sizing: border-box; }
-    .fab, .p { --canvas: #07090b; --card: #090b0c; --raised: #1a1d1e; --edge: #363738; --hair: #262727; --bone: #e9e1dc; --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a;
+    .fab, .p, .pill { --canvas: #07090b; --card: #090b0c; --raised: #1a1d1e; --edge: #363738; --hair: #262727; --bone: #e9e1dc; --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a;
       --green: #55bc82; --red: #ff6a5c; --blue: #3e7edf; --soft: cubic-bezier(.1, 0, .1, 1); --out: cubic-bezier(.22, 1, .36, 1); --swap: cubic-bezier(.76, 0, .24, 1);
       font: 400 14px/1.45 "Omni Inter", Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "cv11", "tnum"; -webkit-font-smoothing: antialiased; }
     .fab { position: fixed; right: 16px; bottom: 16px; z-index: 2147483646; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 12px; cursor: pointer;
@@ -616,6 +616,17 @@
     kbd { font: 11px "Omni Mono", "JetBrains Mono", ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); }
     button:focus-visible, select:focus-visible, input:focus-visible, .cell:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
     .empty p { margin: 0; }
+    /* the button under a video on the page */
+    .pill { position: fixed; z-index: 2147483645; display: flex; align-items: center; height: 34px; padding: 0 4px 0 2px; border-radius: 9px; background: var(--card); color: var(--paper);
+      box-shadow: inset 0 0 0 1px var(--edge), 0 10px 24px rgba(0,0,0,.35), 0 2px 4px rgba(0,0,0,.3); animation: pill-in .18s var(--out) both; }
+    .pill[hidden] { display: none; }
+    @keyframes pill-in { from { opacity: 0; transform: translateY(-4px); } }
+    .pill button { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 6px; border: 0; border-radius: 7px; background: none; color: inherit; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+    .pill button:hover { background: var(--raised); } .pill button svg { width: 22px; height: 22px; flex: none; }
+    .pill small { color: var(--muted); font: 12px "Omni Mono", "JetBrains Mono", ui-monospace, monospace; padding-right: 6px; }
+    .row.flash { animation: flash 1.6s var(--out); }
+    @keyframes flash { from { background: #262a2b; box-shadow: inset 0 0 0 1px var(--bone); } }
+    @media (prefers-reduced-motion: reduce) { .pill, .row.flash { animation: none; } }
     .top { transition: box-shadow .2s; } .top:focus-within { box-shadow: inset 0 -2px 0 var(--blue); } .top input:focus-visible { outline: 0; }
     .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
     .tabs button span { pointer-events: none; }
@@ -1228,6 +1239,82 @@
     setBar(!bad ? `${ok} sent to Ghost Downloader.` : ok ? `${ok} sent to Ghost, ${bad} failed: ${why}` : why, bad ? "err" : "ok", true);
   }
 
+  // ---------- a button under each video on the page ----------
+  // Pointing at a video (or an audio player) shows "Download this media" just under it, or inside its top edge when
+  // there's no room below. It opens the panel on that media's row, focused and lit, ready for Save or Ghost. A stream
+  // the player feeds through a blob: address is matched to the stream found on the network.
+  let pill = null, pillFor = null, pillHide = 0, pillRaf = 0;
+  const pillOn = () => store.get("pill", true);
+  function mediaAt(x, y) {
+    for (const v of document.querySelectorAll("video, audio[controls]")) {
+      const r = v.getBoundingClientRect();
+      if (r.width < 200 || r.height < 30 || getComputedStyle(v).visibility === "hidden") continue;
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom + 48) return v;
+    }
+    return null;
+  }
+  function itemFor(v) {
+    const g = groups(), list = [...g.video, ...g.audio], src = v.currentSrc || v.src;
+    if (src && !/^blob:/.test(src)) { const u = whole(abs(src) || ""), hit = list.find((it) => it.url === u); if (hit) return hit; }
+    return list.find((it) => it.kind === "yt") || list.find((it) => it.kind === "hls") || list.find((it) => it.kind === "dash")
+      || list.find((it) => it.kind === (v.tagName === "AUDIO" ? "audio" : "video")) || null;
+  }
+  function showPill(v) {
+    mount(); if (!root) return;
+    clearTimeout(pillHide);
+    if (!pill) {
+      pill = mk("div", "pill"); pill.setAttribute("role", "group"); pill.setAttribute("aria-label", "Omni Downloader");
+      pill.onpointerenter = () => clearTimeout(pillHide); pill.onpointerleave = () => hidePill(900);
+      root.append(pill);
+    }
+    const it = itemFor(v);
+    if (pillFor !== v || pill.hidden || pill.dataset.url !== (it?.url || "")) {
+      const b = btn("", () => { hidePill(0); openAt(it); }, ""); b.append(svg("down"), it ? "Download this media" : "Find media");
+      b.title = it ? `${rowName(it)} (${keyNames().join("+")} opens the panel)` : "No file or stream found for this player yet: press play first";
+      pill.replaceChildren(b); if (it?.kind === "yt" || it?.kind === "dash" || it?.drm) pill.append(mk("small", null, it.drm ? "DRM" : "Ghost"));
+      pill.dataset.url = it?.url || ""; pill.hidden = false; pillFor = v;
+    }
+    placePill();
+  }
+  function placePill() {
+    if (!pill || pill.hidden || !pillFor) return;
+    if (!pillFor.isConnected || document.fullscreenElement) return hidePill(0);
+    const r = pillFor.getBoundingClientRect(), w = pill.offsetWidth || 200, h = pill.offsetHeight || 34;
+    if (r.bottom < 0 || r.top > innerHeight) return hidePill(0);
+    const below = r.bottom + 8 + h <= innerHeight - 8;
+    pill.style.top = `${below ? r.bottom + 8 : Math.max(8, r.top + 8)}px`;
+    pill.style.left = `${Math.max(8, Math.min(r.left + (below ? 0 : 8), innerWidth - w - 8))}px`;
+  }
+  function hidePill(ms) { clearTimeout(pillHide); pillHide = setTimeout(() => { if (pill) pill.hidden = true; pillFor = null; }, ms); }
+  // opens the panel on one item's row: its tab, scrolled to, focused and lit
+  function openAt(it) {
+    if (!panel) toggle();
+    if (!it) { if (tab !== "video") setTab("video"); return; }
+    const t = it.kind === "audio" || soundOnly(it) ? "audio" : "video";
+    if (tab !== t) { tab = t; store.set("tab", t); }
+    if (query) { query = ""; const q = panel.querySelector(".top input"); if (q) q.value = ""; }
+    draw();
+    const row = rows.get(it.url)?.el;
+    if (!row?.isConnected) return;
+    row.scrollIntoView({ block: "nearest" }); row.classList.remove("flash"); void row.offsetWidth; row.classList.add("flash");
+    (row.querySelector("[data-k$=':main']") || row.querySelector("button"))?.focus({ preventScroll: true });
+    say(`${rowName(it)}. ${row.querySelector("[data-k$=':main']")?.textContent || ""} is ready.`);
+  }
+  const watchPointer = (e) => {
+    if (!pillOn() || pillRaf) return;
+    const x = e.clientX, y = e.clientY, touch = e.pointerType === "touch";
+    pillRaf = requestAnimationFrame(() => {
+      pillRaf = 0;
+      if (e.composedPath?.().includes(host)) return; // on the pill or the panel
+      const v = mediaAt(x, y);
+      if (v) { showPill(v); if (touch) hidePill(4000); } else if (pill && !pill.hidden) hidePill(900);
+    });
+  };
+  window.addEventListener("pointermove", watchPointer, { passive: true });
+  window.addEventListener("pointerdown", watchPointer, { passive: true });
+  window.addEventListener("scroll", () => placePill(), { passive: true, capture: true });
+  window.addEventListener("resize", () => placePill(), { passive: true });
+
   // ---------- start ----------
   const ready = () => { mount(); setTimeout(() => { try { scan(); } catch {} drawFab(); }, 1500); };
   if (document.body) ready(); else document.addEventListener("DOMContentLoaded", ready, { once: true });
@@ -1237,6 +1324,7 @@
   if (typeof GM_registerMenuCommand === "function") {
     GM_registerMenuCommand(`Open Omni Downloader (${keyNames().join("+")})`, () => toggle());
     GM_registerMenuCommand("Show / hide the floating button", () => { store.set("fab", !store.get("fab", true)); drawFab(); });
+    GM_registerMenuCommand("Show / hide the button under videos", () => { store.set("pill", !pillOn()); if (!pillOn()) hidePill(0); });
     GM_registerMenuCommand("Shortcut: switch between Alt+Shift+D and Alt+D", () => {
       store.set("key", altD() ? "alt+shift+d" : "alt+d");
       alert(`Omni Downloader now opens with ${keyNames().join("+")}.${altD() ? " (Alt+D no longer moves to the address bar on pages.)" : ""}`);

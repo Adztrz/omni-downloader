@@ -6,6 +6,8 @@ A Tampermonkey script that finds the images, videos and audio on any page, inclu
 
 Press **Alt+Shift+D**, or the button at the bottom right (its badge counts the videos and audio found; it can be hidden from Tampermonkey's menu). The panel opens with the filter box focused, and **Esc** closes it. Alt+D is the browser's own "go to the address bar", so it's left alone unless you switch to it from Tampermonkey's menu.
 
+Point at a video or an audio player on the page and a **Download this media** button appears just under it (or inside its top edge when there's no room below). It opens the panel on that media's row, focused and ready for Save or Ghost. It can be turned off from Tampermonkey's menu.
+
 Each file or stream has one main button, **Save** or **Ghost**, and a **▾** beside it with the rest: save in the browser, send to Ghost Downloader, copy the address, copy an ffmpeg command, and for HLS *keep as .ts*. Whichever of Save and Ghost you pick from the ▾ becomes the main button from then on.
 
 It works from the keyboard: ↓ from the filter goes into the list, ↑ and ↓ move between rows, ← and → between tabs and between images, Space selects an image and Enter saves it. Saves, Ghost sends, copies and errors are announced to screen readers.
