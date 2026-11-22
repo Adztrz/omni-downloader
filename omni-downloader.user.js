@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.13
+// @version      1.13.1
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -1119,8 +1119,9 @@
           : v.codecs && !/avc|hvc|hev|vp0?9|av01/i.test(v.codecs) ? `Sound only${mbps(v)}` : `Quality ${i + 1}${mbps(v)}`, String(i), false, i === (it.pick || 0))));
         s.onchange = () => { it.pick = +s.value; draw(); }; s.disabled = !!running;
         if (it.variants.length > 1 || !it.info) acts.append(s); else note(it.info);
-        const v = it.variants[it.pick || 0], est = v?.bw && it.dur ? v.bw * it.dur / 8 : 0;
-        if (est > 1.5e9) note(`About ${bytes(est)}: the browser holds all of it in memory while saving. Ghost is safer for one this big.`);
+        const v = it.variants[it.pick || 0], est = v?.bw && it.dur ? v.bw * (it.trim ? it.trim.end - it.trim.start : it.dur) / 8 : 0;
+        if (est > 1.5e9) note(it.trim ? `About ${bytes(est)}: the browser holds all of it in memory while saving. A shorter trim, or a lower quality, is safer.`
+          : `About ${bytes(est)}: the browser holds all of it in memory while saving. Ghost is safer for one this big.`);
         if (v?.audio && it.audioTracks?.some((a) => a.group === v.audio)) note("Its sound is a separate track: save that from the Audio tab.");
       }
       const save = () => { store.set("via", "save"); it.kind === "hls" ? runHls(it) : runDirect(it); };
@@ -1131,8 +1132,13 @@
       ];
       if (running) { const stop = btn("Stop", () => job.ctl.abort(), "b"); stop.dataset.k = `${k}:main`; acts.append(stop); }
       else if (!canGhost(it)) acts.append(split("Save", save, [...copies, ...extra], k, first));
-      else acts.append(split(via === "ghost" ? "Ghost" : "Save", via === "ghost" ? ghost : save,
-        [{ label: "Save in the browser", run: save, on: via !== "ghost" }, { label: "Send to Ghost Downloader", run: ghost, on: via === "ghost" }, { sep: true }, ...copies, ...extra], k, first));
+      else {
+        // Ghost can't be told to fetch part of a video, so while a trim is set the main button saves in the browser
+        const g = via === "ghost" && !it.trim;
+        acts.append(split(g ? "Ghost" : it.trim ? "Save part" : "Save", g ? ghost : save,
+          [{ label: it.trim ? "Save the trimmed part" : "Save in the browser", run: save, on: !g }, { label: it.trim ? "Send the whole video to Ghost (it can't trim)" : "Send to Ghost Downloader", run: ghost, on: g },
+            { sep: true }, ...copies, ...extra], k, first));
+      }
     }
     info.append(acts);
     if (it.trimOpen) info.append(trimEditor(it));
