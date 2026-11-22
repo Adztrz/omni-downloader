@@ -18,6 +18,7 @@ Press **Alt+D**, or the ⬇ button at the bottom right (its badge counts the vid
 - Every save shows its progress under the row (parts done for a stream, MB of the total for a file, picture then sound when the two are joined), with **Stop**.
 - **Copy URL** and **Copy ffmpeg** on every stream and file, for anything better done outside the browser.
 - **Ghost**: a **Ghost** button on every file and stream (and for picked images) hands it to [Ghost Downloader 3](https://github.com/XiaoYouChR/Ghost-Downloader-3), which downloads it outside the browser in parallel pieces and can resume. It sends the page's Referer and User-Agent and its cookies for that address, the chosen quality of a stream, and the file name. DASH streams can go there too. **Page to Ghost** at the bottom sends the page itself, for sites Ghost reads on its own (YouTube, Bilibili). Turn on *aria2 RPC* in Ghost's settings; its port (16800) and token are set from Tampermonkey's menu. Also turn on *Emulate browser fingerprint* in the same settings: sites behind Cloudflare refuse a plain download client (Ghost then says the link couldn't be parsed). Some of them also want the browser's Cloudflare cookie: in Tampermonkey → Settings (Advanced) → Security, set *Allow scripts to access cookies* to **All**, so Omni can pass it on.
+- **YouTube**: on a video, a Short or an embedded YouTube player, the Video tab lists that video with its thumbnail and title. YouTube locks its streams, so it can't be saved in the browser: its **Ghost** button sends the video's address to Ghost Downloader, which saves it with yt-dlp.
 - **Frames**: embedded players inside frames report what they find to the page, and their files are fetched with the frame's address as Referer.
 
 ## What it doesn't do
@@ -25,7 +26,7 @@ Press **Alt+D**, or the ⬇ button at the bottom right (its badge counts the vid
 - **DRM-protected streams** (SAMPLE-AES, Widevine, FairPlay, PlayReady) are refused.
 - **DASH (`.mpd`)** is listed with its ffmpeg command but not saved here.
 - **Live streams** save only the parts listed when you press Save.
-- **YouTube** (and Shorts) streams through its own locked format, not files the page loads; the script doesn't try to get around that. Use YouTube's own Download, or yt-dlp for videos you may save.
+- **YouTube** (and Shorts) streams through its own locked format, not files the page loads; the script doesn't try to get around that. It lists the video for Ghost Downloader (yt-dlp) instead, for videos you may save.
 
 The whole video is put together in memory before saving, so very long high-quality streams need a lot of RAM.
 

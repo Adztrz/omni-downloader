@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.9.4
+// @version      1.10
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -130,8 +130,24 @@
     }
     return best;
   }
+  // a YouTube video (watch page, Shorts, or a player embedded in another page). Its streams are locked (signed, often
+  // fetched by POST), so it isn't caught from the network: it's listed as the video's own address, which Ghost Downloader
+  // saves with yt-dlp. One row, for the video now showing (YouTube changes videos without loading a new page).
+  function youTube() {
+    if (!/(?:^|\.)youtube(?:-nocookie)?\.com$/.test(location.hostname)) return;
+    const shorts = /^\/shorts\//.test(location.pathname);
+    const id = new URLSearchParams(location.search).get("v") || (/^\/(?:shorts|embed|live)\/([\w-]{11})/.exec(location.pathname) || [])[1];
+    const url = id && /^[\w-]{11}$/.test(id) ? (shorts ? `https://www.youtube.com/shorts/${id}` : `https://www.youtube.com/watch?v=${id}`) : "";
+    for (const [u, it] of found) if (it.kind === "yt" && u !== url) found.delete(u);
+    if (!url) return;
+    const title = (document.title || "").replace(/^\(\d+\)\s*/, "").replace(/\s*-\s*YouTube$/, "") || "YouTube video";
+    const had = found.get(url); if (had) { if (had.title !== title) { had.title = title; changed(had); } return; } // the title follows the address
+    const item = { url, kind: "yt", ytId: id, shorts, referer: url, title };
+    found.set(url, item); changed(item);
+  }
   function scan() {
     const d = document;
+    youTube();
     for (const img of d.images) {
       const u = bestSrcset(img.srcset) || img.currentSrc || img.src;
       if (u) add(u, "image", { w: img.naturalWidth, h: img.naturalHeight });
@@ -164,6 +180,9 @@
     setInterval(() => { if (document.querySelector("video, audio")) go(); }, 5000);
     return; // frames have no panel of their own
   }
+
+  // YouTube (and other single-page sites) change the address without loading a page: look again when it changes
+  { let last = location.href; setInterval(() => { if (location.href !== last) { last = location.href; setTimeout(() => { try { scan(); } catch {} onChange(); }, 1200); } }, 1000); }
 
   // ---------- fetching (cross-origin through Tampermonkey, with the page that loaded it as Referer) ----------
   // onprog(loaded, total), when given, reports a big file as it arrives (total 0 when the server doesn't say); such a
@@ -614,7 +633,7 @@
     const g = { video: [], image: [], audio: [] };
     const q = fold(query);
     for (const it of found.values()) if (!partOf.has(it.url) && (!q || fold(`${it.url} ${it.title || ""}`).includes(q))) (it.kind === "image" ? g.image : it.kind === "audio" || soundOnly(it) ? g.audio : g.video).push(it);
-    g.video.sort((a, b) => (b.kind === "hls") - (a.kind === "hls") || (b.kind === "video") - (a.kind === "video"));
+    g.video.sort((a, b) => (b.kind === "yt") - (a.kind === "yt") || (b.kind === "hls") - (a.kind === "hls") || (b.kind === "video") - (a.kind === "video"));
     return g;
   };
   const fold = (t) => String(t || "").toLowerCase();
@@ -746,7 +765,7 @@
 
   function drawMedia(list, nb) {
     if (!list.length) {
-      nb.append(mk("p", "empty", tab === "video" ? "No video found yet. Press play, then look again: streams show up once the player loads them. For YouTube, use Page to Ghost below." : "No audio found yet."));
+      nb.append(mk("p", "empty", tab === "video" ? "No video found yet. Press play, then look again: streams show up once the player loads them." : "No audio found yet."));
       return;
     }
     for (const it of list) {
@@ -756,11 +775,13 @@
       if (soundOnly(it)) info.append(mk("div", "msg", "Saving its video joins this sound in; save it here for the sound alone."));
       const acts = mk("div", "acts");
       if (it.kind === "hls") hlsActs(it, acts, job);
+      else if (it.kind === "yt") acts.append(mk("span", "msg", "YouTube locks its streams: Ghost saves it with yt-dlp."));
       else if (it.kind === "dash") acts.append(mk("span", "msg", "DASH isn't saved here: send it to Ghost or copy the ffmpeg command."));
       else if (job && !job.done && !job.err) acts.append(btn("Stop", () => job.ctl.abort()));
       else acts.append(btn(job?.done ? "Save again" : "Save", () => runDirect(it), "b pri"));
       if (/^https?:/.test(it.url)) acts.append(ghostBtn(it));
-      acts.append(btn("Copy URL", () => copy(it.url)), btn("Copy ffmpeg", () => copy(`ffmpeg -headers "Referer: ${it.referer || location.href}\\r\\n" -i "${it.url}" -c copy "${fileName(it, "mp4").replace(/\.\w+$/, "")}.mp4"`)));
+      acts.append(btn("Copy URL", () => copy(it.url)));
+      if (it.kind !== "yt") acts.append(btn("Copy ffmpeg", () => copy(`ffmpeg -headers "Referer: ${it.referer || location.href}\\r\\n" -i "${it.url}" -c copy "${fileName(it, "mp4").replace(/\.\w+$/, "")}.mp4"`)));
       info.append(acts);
       if (it.ghost) info.append(mk("div", "msg" + (it.ghost.err ? " err" : it.ghost.ok ? " ok" : ""), it.ghost.text));
       if (job) {
@@ -797,7 +818,7 @@
   }
   const bytes = (n) => n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e7 ? `${Math.round(n / 1e6)} MB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`;
   function sizeLoad(it) {
-    if (it.sizeP || !/^https?:/.test(it.url) || it.kind === "hls" || it.kind === "dash") return;
+    if (it.sizeP || !/^https?:/.test(it.url) || it.kind === "hls" || it.kind === "dash" || it.kind === "yt") return;
     it.sizeP = headSize(it.url, it.referer).then((n) => { it.size = n; retitle(it); for (const x of found.values()) if (x !== it && x.size && sameAsset(x, it)) retitle(x); });
   }
   const sameAsset = (a, b) => { const k = assetKey(a.url); return !!k && k === assetKey(b.url); };
@@ -812,14 +833,15 @@
   function rowTitle(it) {
     const m = it.meta || {}, top = it.variants?.find((v) => v.res)?.res.split("x")[1];
     const w = it.kind === "hls" ? 0 : m.w || it.w, h = it.kind === "hls" ? 0 : m.h || it.h, d = it.kind === "hls" ? it.dur : m.d;
-    const label = soundOnly(it) ? "Sound track" : { hls: "HLS stream", dash: "DASH stream", video: "Video file", audio: "Audio file" }[it.kind] || it.kind;
-    return [label, it.frame && "in a frame", w && h && `${w}×${h}`, top && `up to ${top}p`, clock(d), sizeText(it)].filter(Boolean).join(" · ");
+    const label = soundOnly(it) ? "Sound track" : it.kind === "yt" ? (it.shorts ? "YouTube Short" : "YouTube video") : { hls: "HLS stream", dash: "DASH stream", video: "Video file", audio: "Audio file" }[it.kind] || it.kind;
+    return [label, it.kind === "yt" && it.title, it.frame && "in a frame", w && h && `${w}×${h}`, top && `up to ${top}p`, clock(d), sizeText(it)].filter(Boolean).join(" · ");
   }
   function thumb(it) {
     if (it.thumb) return it.thumb;
     const box = mk("div", "th"); box.dataset.note = it.kind === "dash" ? "No preview" : "Loading…"; it.thumb = box;
     box.onclick = () => { const v = box.querySelector("video"); if (v) v.paused ? v.play().catch(() => {}) : v.pause(); };
     if (it.kind === "video" || it.kind === "audio") preview(it, it.url);
+    if (it.kind === "yt") { const im = mk("img"); im.alt = ""; im.src = `https://i.ytimg.com/vi/${it.ytId}/mqdefault.jpg`; im.style.cssText = "width:100%;height:100%;object-fit:cover"; box.append(im); box.onclick = null; }
     return box;
   }
   function preview(it, src) {
@@ -932,13 +954,14 @@
       try { gc.list({ url }, (list, err) => resolve(!err && list?.length ? list.map((c) => `${c.name}=${c.value}`).join("; ") : own)); } catch { resolve(own); }
     });
   }
-  async function ghostAdd(url, referer, name) {
-    const header = [`Referer: ${referer || location.href}`, `User-Agent: ${navigator.userAgent}`], cookie = await cookiesFor(url);
+  async function ghostAdd(url, referer, name, withCookies = true) {
+    const header = [`Referer: ${referer || location.href}`, `User-Agent: ${navigator.userAgent}`], cookie = withCookies ? await cookiesFor(url) : "";
     if (cookie) header.push(`Cookie: ${cookie}`);
     return ghostCall("aria2.addUri", [[url], name ? { header, out: name } : { header }]);
   }
   // what to hand over for one row: the chosen quality of a stream, the page for Bilibili, else the file
   function ghostSend(it) {
+    if (it.kind === "yt") return ghostAdd(it.url, it.url, "", false); // yt-dlp names it; your Google sign-in stays in the browser
     if (BILI.test(it.url)) return ghostAdd(location.href, location.href);
     if (it.kind === "hls" && it.variants?.length) return ghostAdd(it.variants[it.pick || 0].url, it.referer, `${clean(it.title || document.title)}.mp4`);
     if (it.kind === "hls" || it.kind === "dash") return ghostAdd(it.url, it.referer, `${clean(it.title || document.title)}.mp4`);
