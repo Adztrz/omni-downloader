@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.13.1
+// @version      1.13.2
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -552,23 +552,42 @@
   function trimFrag(u, start, end) {
     const info = mp4Info(u); if (!info?.frag) return null;
     const d = dv(u), scales = Object.fromEntries(info.traks.map((t) => [trackId(u, t.box), mdhdScale(u, t.box)]));
+    // each track's default sample length (trex), for fragments whose samples don't say theirs
+    const trexDur = {}; for (const b of kids(u, find(u, info.moov, "mvex") || info.moov)) if (b.type === "trex") trexDur[d.getUint32(b.body + 4)] = d.getUint32(b.body + 12);
+    // how long a traf plays: its samples' lengths from trun, else tfhd's default, else trex's
+    const trafLen = (traf, id) => {
+      const tf = find(u, traf, "tfhd"), tfl = d.getUint32(tf.body) & 0xffffff;
+      let o = tf.body + 8; if (tfl & 1) o += 8; if (tfl & 2) o += 4;
+      const def = tfl & 8 ? d.getUint32(o) : trexDur[id] || 0; let n = 0;
+      for (const tr of kids(u, traf).filter((x) => x.type === "trun")) {
+        const fl = d.getUint32(tr.body) & 0xffffff, cnt = d.getUint32(tr.body + 4); let p = tr.body + 8 + (fl & 1 ? 4 : 0) + (fl & 4 ? 4 : 0);
+        const step = (fl & 0x100 ? 4 : 0) + (fl & 0x200 ? 4 : 0) + (fl & 0x400 ? 4 : 0) + (fl & 0x800 ? 4 : 0);
+        if (fl & 0x100) for (let i = 0; i < cnt; i++, p += step) n += d.getUint32(p); else n += cnt * def;
+      }
+      return n;
+    };
     const frs = []; let cur = null;
     for (const b of info.top) {
       if (b.type === "moof") {
-        let t = Infinity;
+        let t = Infinity, e = -Infinity;
         for (const traf of kids(u, b).filter((x) => x.type === "traf")) {
-          const id = d.getUint32(find(u, traf, "tfhd").body + 4), tf = find(u, traf, "tfdt");
-          if (tf) t = Math.min(t, getN(d, tf.body + 4, u[tf.body] === 1) / (scales[id] || 1));
+          const id = d.getUint32(find(u, traf, "tfhd").body + 4), tf = find(u, traf, "tfdt"), sc = scales[id] || 1;
+          if (tf) { const t0 = getN(d, tf.body + 4, u[tf.body] === 1) / sc; t = Math.min(t, t0); e = Math.max(e, t0 + trafLen(traf, id) / sc); }
         }
-        frs.push(cur = { moof: b, mdats: [], t: isFinite(t) ? t : frs.length });
+        frs.push(cur = { moof: b, mdats: [], t: isFinite(t) ? t : frs.length, e: isFinite(e) ? e : NaN });
       } else if (b.type === "mdat" && cur) cur.mdats.push(b);
     }
     const starts = [...new Set(frs.map((f) => f.t))].sort((a, b) => a - b), next = (t) => starts.find((x) => x > t) ?? Infinity;
     const keep = frs.filter((f) => f.t < end && next(f.t) > start);
     if (!keep.length) return null;
-    const base = Math.min(...keep.map((f) => f.t)), last = Math.max(...keep.map((f) => next(f.t)));
-    const moov = u.slice(info.moov.start, info.moov.end), mroot = boxes(moov)[0], mehd = find(moov, mroot, "mvex/mehd");
-    if (mehd) setN(dv(moov), mehd.body + 4, moov[mehd.body] === 1, isFinite(last) ? (Math.min(last, end) - base) * mvhdScale(moov, mroot) : 0);
+    const base = Math.min(...keep.map((f) => f.t));
+    // the part's real length, from its samples, written everywhere a player looks for it (mehd, mvhd, each tkhd), in the
+    // movie's timescale; left as it was, a player shows the whole video's length, or none, and seeking goes wrong
+    const ends = keep.map((f) => f.e).filter(isFinite), len = (ends.length ? Math.max(...ends) : Math.max(...keep.map((f) => next(f.t))) || 0) - base;
+    const moov = u.slice(info.moov.start, info.moov.end), mroot = boxes(moov)[0], md = dv(moov), ms = mvhdScale(moov, mroot), mlen = isFinite(len) && len > 0 ? len * ms : 0;
+    const mehd = find(moov, mroot, "mvex/mehd"); if (mehd) setN(md, mehd.body + 4, moov[mehd.body] === 1, mlen);
+    const mvhd = find(moov, mroot, "mvhd"), mv1 = moov[mvhd.body] === 1; setN(md, mvhd.body + 4 + (mv1 ? 20 : 12), mv1, mlen);
+    for (const t of kids(moov, mroot).filter((b) => b.type === "trak")) { const tk = find(moov, t, "tkhd"), v1 = moov[tk.body] === 1; setN(md, tk.body + 4 + (v1 ? 24 : 16), v1, mlen); }
     const ftyp = info.top.find((b) => b.type === "ftyp"), parts = ftyp ? [u.subarray(ftyp.start, ftyp.end), moov] : [moov];
     let pos = parts.reduce((a, x) => a + x.length, 0), seq = 0;
     for (const f of keep) {
