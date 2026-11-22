@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.9.1
+// @version      1.9.2
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -502,6 +502,7 @@
     .fab:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px #696a68, 0 16px 28px rgba(0,0,0,.4), 0 2px 4px rgba(0,0,0,.3); }
     .fab:active { transform: scale(.94); }
     .fab svg { width: 22px; height: 22px; grid-area: 1 / 1; transition: transform .35s var(--out), opacity .2s; }
+    .fab svg.open { width: 34px; height: 34px; }
     .fab svg.x { transform: rotate(-90deg) scale(.6); opacity: 0; }
     .fab[aria-expanded="true"] svg.open { transform: rotate(90deg) scale(.6); opacity: 0; } .fab[aria-expanded="true"] svg.x { transform: none; opacity: 1; }
     .fab .n { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--bone); color: var(--canvas);
@@ -590,7 +591,7 @@
   try { CSS.registerProperty({ name: "--ht-w", syntax: "<length>", inherits: false, initialValue: "9000px" }); } catch {}
   try { CSS.registerProperty({ name: "--od-p", syntax: "<percentage>", inherits: false, initialValue: "0%" }); } catch {}
   const ICON = {
-    down: '<svg class="open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+    down: '<svg class="open" viewBox="12 12 104 104" fill="currentColor"><g><circle cx="91.0" cy="26.8" r="1.1" fill-opacity="0.41"/><circle cx="98.2" cy="33.2" r="1.1" fill-opacity="0.46"/><circle cx="103.8" cy="41.0" r="1.3" fill-opacity="0.51"/><circle cx="107.7" cy="49.8" r="1.5" fill-opacity="0.57"/><circle cx="109.7" cy="59.2" r="1.7" fill-opacity="0.64"/><circle cx="109.7" cy="68.8" r="2.0" fill-opacity="0.71"/><circle cx="107.7" cy="78.2" r="2.3" fill-opacity="0.78"/><circle cx="103.8" cy="87.0" r="2.6" fill-opacity="0.84"/><circle cx="98.2" cy="94.8" r="2.9" fill-opacity="0.89"/><circle cx="91.0" cy="101.2" r="3.2" fill-opacity="0.94"/><circle cx="82.7" cy="106.0" r="3.4" fill-opacity="0.97"/><circle cx="73.6" cy="109.0" r="3.6" fill-opacity="0.99"/><circle cx="64.0" cy="110.0" r="3.6" fill-opacity="1.00"/><circle cx="54.4" cy="109.0" r="3.6" fill-opacity="0.99"/><circle cx="45.3" cy="106.0" r="3.4" fill-opacity="0.97"/><circle cx="37.0" cy="101.2" r="3.2" fill-opacity="0.94"/><circle cx="29.8" cy="94.8" r="2.9" fill-opacity="0.89"/><circle cx="24.2" cy="87.0" r="2.6" fill-opacity="0.84"/><circle cx="20.3" cy="78.2" r="2.3" fill-opacity="0.78"/><circle cx="18.3" cy="68.8" r="2.0" fill-opacity="0.71"/><circle cx="18.3" cy="59.2" r="1.7" fill-opacity="0.64"/><circle cx="20.3" cy="49.8" r="1.5" fill-opacity="0.57"/><circle cx="24.2" cy="41.0" r="1.3" fill-opacity="0.51"/><circle cx="29.8" cy="33.2" r="1.1" fill-opacity="0.46"/><circle cx="37.0" cy="26.8" r="1.1" fill-opacity="0.41"/><circle cx="87.1" cy="33.9" r="0.9" fill-opacity="0.42"/><circle cx="94.1" cy="40.9" r="1.0" fill-opacity="0.48"/><circle cx="99.1" cy="49.5" r="1.2" fill-opacity="0.55"/><circle cx="101.7" cy="59.0" r="1.4" fill-opacity="0.63"/><circle cx="101.7" cy="69.0" r="1.7" fill-opacity="0.72"/><circle cx="99.1" cy="78.5" r="2.1" fill-opacity="0.80"/><circle cx="94.1" cy="87.1" r="2.4" fill-opacity="0.87"/><circle cx="87.1" cy="94.1" r="2.7" fill-opacity="0.93"/><circle cx="78.5" cy="99.1" r="2.9" fill-opacity="0.98"/><circle cx="69.0" cy="101.7" r="3.0" fill-opacity="1.00"/><circle cx="59.0" cy="101.7" r="3.0" fill-opacity="1.00"/><circle cx="49.5" cy="99.1" r="2.9" fill-opacity="0.98"/><circle cx="40.9" cy="94.1" r="2.7" fill-opacity="0.93"/><circle cx="33.9" cy="87.1" r="2.4" fill-opacity="0.87"/><circle cx="28.9" cy="78.5" r="2.1" fill-opacity="0.80"/><circle cx="26.3" cy="69.0" r="1.7" fill-opacity="0.72"/><circle cx="26.3" cy="59.0" r="1.4" fill-opacity="0.63"/><circle cx="28.9" cy="49.5" r="1.2" fill-opacity="0.55"/><circle cx="33.9" cy="40.9" r="1.0" fill-opacity="0.48"/><circle cx="40.9" cy="33.9" r="0.9" fill-opacity="0.42"/></g><path d="M64 41v34M51 63l13 13 13-13M49 88h30" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>', // the logo: the download arrow in its halftone ring
     x: '<svg class="x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
     find: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
     again: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>',
