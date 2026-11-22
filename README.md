@@ -1,3 +1,5 @@
+<p align="center"><img src="logo.svg" width="112" alt="Omni Downloader logo: a download arrow inside a halftone ring of dots"></p>
+
 # Omni Downloader
 
 A Tampermonkey script that finds the images, videos and audio on any page, including HLS (`.m3u8`) streams that players load behind a `blob:` address, and saves them.
