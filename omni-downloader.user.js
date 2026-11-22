@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.8
-// @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it.
+// @version      1.9
+// @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @homepageURL  https://github.com/Adztrz/omni-downloader
 // @updateURL    https://raw.githubusercontent.com/Adztrz/omni-downloader/master/omni-downloader.user.js
@@ -17,6 +17,7 @@
 // @grant        GM_setValue
 // @grant        unsafeWindow
 // @connect      *
+// @connect      127.0.0.1
 // @require      https://cdn.jsdelivr.net/npm/mux.js@6.3.0/dist/mux.min.js
 // @require      https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js
 // ==/UserScript==
@@ -652,6 +653,12 @@
     top.append(svg("find"), q, again, shut);
     main = mk("div", "main");
     const foot = mk("div", "foot"); foot.innerHTML = "<span><kbd>Alt</kbd> <kbd>D</kbd> open / close</span><span><kbd>Esc</kbd> close</span><span>Double-click an image to save it</span>";
+    // the page itself, for sites Ghost reads on its own (YouTube and Bilibili through yt-dlp and its own support)
+    const fmsg = mk("span", "msg"), page = btn("Page to Ghost", () => {
+      page.disabled = true; fmsg.className = "msg"; fmsg.textContent = "Sending…";
+      ghostAdd(location.href, location.href).then(() => { fmsg.className = "msg ok"; fmsg.textContent = "Sent."; }, (e) => { fmsg.className = "msg err"; fmsg.textContent = e.message; }).finally(() => { page.disabled = false; });
+    });
+    page.title = "Send this page's address to Ghost Downloader (YouTube, Bilibili and others it reads itself)"; page.style.marginLeft = "auto"; foot.append(page, fmsg);
     panel.append(top, main, foot);
     root.append(panel); draw(); drawFab();
   }
@@ -682,7 +689,8 @@
     bar.append(btn(sel.length === shown.length && shown.length ? "Select none" : "Select all", () => { if (sel.length === shown.length) shown.forEach((x) => picked.delete(x.url)); else shown.forEach((x) => picked.add(x.url)); draw(); }));
     const zip = btn(sel.length ? `ZIP ${sel.length}` : "ZIP", () => saveZip(sel, zip, msg), "b pri"); zip.disabled = !sel.length;
     const each = btn("One by one", () => saveEach(sel, msg)); each.disabled = !sel.length;
-    const msg = mk("span", "msg"); bar.append(zip, each, msg);
+    const gh = btn("Ghost", () => ghostEach(sel.filter((x) => /^https?:/.test(x.url)), msg)); gh.disabled = !sel.length; gh.title = "Download them with Ghost Downloader";
+    const msg = mk("span", "msg"); bar.append(zip, each, gh, msg);
     main.append(bar);
     if (!shown.length) return nb.append(mk("p", "empty", list.length ? `No images of ${minSize}px or more: lower the number above.` : "No images found yet."));
     const grid = mk("div", "grid");
@@ -726,7 +734,7 @@
 
   function drawMedia(list, nb) {
     if (!list.length) {
-      nb.append(mk("p", "empty", tab === "video" ? "No video found yet. Press play, then look again: streams show up once the player loads them." : "No audio found yet."));
+      nb.append(mk("p", "empty", tab === "video" ? "No video found yet. Press play, then look again: streams show up once the player loads them. For YouTube, use Page to Ghost below." : "No audio found yet."));
       return;
     }
     for (const it of list) {
@@ -736,11 +744,13 @@
       if (soundOnly(it)) info.append(mk("div", "msg", "Saving its video joins this sound in; save it here for the sound alone."));
       const acts = mk("div", "acts");
       if (it.kind === "hls") hlsActs(it, acts, job);
-      else if (it.kind === "dash") acts.append(mk("span", "msg", "DASH isn't saved here: copy the ffmpeg command."));
+      else if (it.kind === "dash") acts.append(mk("span", "msg", "DASH isn't saved here: send it to Ghost or copy the ffmpeg command."));
       else if (job && !job.done && !job.err) acts.append(btn("Stop", () => job.ctl.abort()));
       else acts.append(btn(job?.done ? "Save again" : "Save", () => runDirect(it), "b pri"));
+      if (/^https?:/.test(it.url)) acts.append(ghostBtn(it));
       acts.append(btn("Copy URL", () => copy(it.url)), btn("Copy ffmpeg", () => copy(`ffmpeg -headers "Referer: ${it.referer || location.href}\\r\\n" -i "${it.url}" -c copy "${fileName(it, "mp4").replace(/\.\w+$/, "")}.mp4"`)));
       info.append(acts);
+      if (it.ghost) info.append(mk("div", "msg" + (it.ghost.err ? " err" : it.ghost.ok ? " ok" : ""), it.ghost.text));
       if (job) {
         const pr = mk("div", "prog" + (job.err ? " err" : job.done ? "" : " on")), bar = mk("i"); bar.style.width = `${Math.round((job.frac || 0) * 100)}%`; pr.append(bar);
         info.append(pr, mk("div", "msg" + (job.err ? " err" : job.done ? " ok" : ""), job.err || job.text || ""));
@@ -878,6 +888,51 @@
   }
   function copy(t) { try { GM_setClipboard(t, "text"); } catch { navigator.clipboard?.writeText(t).catch(() => {}); } }
 
+  // ---------- Ghost Downloader ----------
+  // Ghost Downloader 3, a desktop download manager, answers aria2's JSON-RPC on 127.0.0.1:16800 when its aria2 RPC
+  // setting is on. "Ghost" hands it a file or stream with the page's Referer and User-Agent (and, for the page's own
+  // files, its cookies), and Ghost downloads it in parallel pieces outside the browser: no size limit from memory, and
+  // it resumes. A stream goes as the chosen quality's playlist (Ghost's M3U8 / DASH engines join it); Bilibili goes as
+  // the page, which Ghost's own Bilibili support reads. Port and token are set from Tampermonkey's menu.
+  const ghostCfg = () => ({ port: 16800, token: "", ...store.get("ghost", {}) });
+  function ghostCall(method, params) {
+    const { port, token } = ghostCfg(), url = `http://127.0.0.1:${port}/jsonrpc`;
+    const data = JSON.stringify({ jsonrpc: "2.0", id: String(Date.now()), method, params: token ? [`token:${token}`, ...params] : params });
+    const down = () => new Error("Ghost Downloader isn't answering: open it, and turn on aria2 RPC in its settings");
+    const read = (text) => {
+      let r; try { r = JSON.parse(text); } catch { throw down(); }
+      if (r.error) throw new Error(/unauthorized/i.test(r.error.message) ? "Ghost wants its RPC token: set it from Tampermonkey's menu" : `Ghost: ${r.error.message}`);
+      return r.result;
+    };
+    if (typeof GM_xmlhttpRequest !== "function") return fetch(url, { method: "POST", body: data }).then((r) => r.text(), () => { throw down(); }).then(read);
+    return new Promise((resolve, reject) => GM_xmlhttpRequest({ method: "POST", url, data, anonymous: true, timeout: 8000, headers: { "Content-Type": "application/json" },
+      onload: (r) => { try { resolve(read(r.responseText)); } catch (e) { reject(e); } }, onerror: () => reject(down()), ontimeout: () => reject(down()) }));
+  }
+  function ghostAdd(url, referer, name) {
+    const header = [`Referer: ${referer || location.href}`, `User-Agent: ${navigator.userAgent}`];
+    try { if (new URL(url).origin === location.origin && document.cookie) header.push(`Cookie: ${document.cookie}`); } catch {}
+    return ghostCall("aria2.addUri", [[url], name ? { header, out: name } : { header }]);
+  }
+  // what to hand over for one row: the chosen quality of a stream, the page for Bilibili, else the file
+  function ghostSend(it) {
+    if (BILI.test(it.url)) return ghostAdd(location.href, location.href);
+    if (it.kind === "hls" && it.variants?.length) return ghostAdd(it.variants[it.pick || 0].url, it.referer, `${clean(it.title || document.title)}.mp4`);
+    if (it.kind === "hls" || it.kind === "dash") return ghostAdd(it.url, it.referer, `${clean(it.title || document.title)}.mp4`);
+    return ghostAdd(it.url, it.referer, fileName(it, it.kind === "image" ? "jpg" : it.kind === "audio" || soundOnly(it) ? "m4a" : "mp4"));
+  }
+  function ghostBtn(it) {
+    const b = btn("Ghost", () => {
+      b.disabled = true; it.ghost = { text: "Sending to Ghost…" };
+      ghostSend(it).then(() => { it.ghost = { text: "Sent to Ghost Downloader.", ok: true }; }, (e) => { it.ghost = { text: e.message, err: true }; }).finally(() => draw());
+    });
+    b.title = "Download it with Ghost Downloader"; return b;
+  }
+  async function ghostEach(list, msg) {
+    let ok = 0, err = "";
+    for (const it of list) { msg.className = "msg"; msg.textContent = `Sending ${ok + 1} of ${list.length} to Ghost…`; try { await ghostSend(it); ok++; } catch (e) { err = e.message; break; } }
+    msg.className = "msg " + (err ? "err" : "ok"); msg.textContent = err ? (ok ? `${ok} sent, then: ${err}` : err) : `${ok} sent to Ghost Downloader.`;
+  }
+
   // ---------- start ----------
   const ready = () => { mount(); setTimeout(() => { try { scan(); } catch {} drawFab(); }, 1500); };
   if (document.body) ready(); else document.addEventListener("DOMContentLoaded", ready, { once: true });
@@ -888,5 +943,13 @@
   if (typeof GM_registerMenuCommand === "function") {
     GM_registerMenuCommand("Open Omni Downloader (Alt+D)", () => toggle());
     GM_registerMenuCommand("Show / hide the floating button", () => { store.set("fab", !store.get("fab", true)); drawFab(); });
+    GM_registerMenuCommand("Ghost Downloader: port and token", () => {
+      const c = ghostCfg(), port = prompt("Ghost Downloader's aria2 RPC port (Settings → aria2 RPC):", String(c.port));
+      if (port == null) return;
+      const token = prompt("Its RPC token (leave empty if none is set):", c.token);
+      if (token == null) return;
+      store.set("ghost", { port: Math.min(65535, Math.max(1024, parseInt(port, 10) || 16800)), token: token.trim() });
+      ghostCall("aria2.getVersion", []).then((v) => alert(`Ghost Downloader ${v.version} answers.`), (e) => alert(e.message));
+    });
   }
 })();

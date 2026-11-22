@@ -15,6 +15,7 @@ Press **Alt+D**, or the ⬇ button at the bottom right (its badge counts the vid
 - **Audio**: audio files, the sound tracks of sites that keep sound apart from the picture, and the separate sound tracks some HLS streams have.
 - Every save shows its progress under the row (parts done for a stream, MB of the total for a file, picture then sound when the two are joined), with **Stop**.
 - **Copy URL** and **Copy ffmpeg** on every stream and file, for anything better done outside the browser.
+- **Ghost**: a **Ghost** button on every file and stream (and for picked images) hands it to [Ghost Downloader 3](https://github.com/XiaoYouChR/Ghost-Downloader-3), which downloads it outside the browser in parallel pieces and can resume. It sends the page's Referer and User-Agent (and cookies for the page's own files), the chosen quality of a stream, and the file name. DASH streams can go there too. **Page to Ghost** at the bottom sends the page itself, for sites Ghost reads on its own (YouTube, Bilibili). Turn on *aria2 RPC* in Ghost's settings; its port (16800) and token are set from Tampermonkey's menu.
 - **Frames**: embedded players inside frames report what they find to the page, and their files are fetched with the frame's address as Referer.
 
 ## What it doesn't do
@@ -43,4 +44,4 @@ To save video and audio files directly, Tampermonkey may need them allowed in Se
   - It reads the page itself for images and media elements.
 - Files are fetched through `GM_xmlhttpRequest`, so other sites' files work.
 - MPEG-TS is turned into MP4 by [mux.js](https://github.com/videojs/mux.js), and ZIPs are made by [fflate](https://github.com/101arrowz/fflate). Both are loaded with `@require`.
-- Nothing is sent anywhere except the requests for the files themselves.
+- Nothing is sent anywhere except the requests for the files themselves, and, when you press Ghost, the file's address and headers to Ghost Downloader on your own computer (127.0.0.1).
