@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.15.2
+// @version      1.15.3
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -1652,6 +1652,16 @@
   // ---------- start ----------
   const ready = () => { mount(); setTimeout(() => { try { scan(); } catch {} drawFab(); }, 1500); };
   if (document.body) ready(); else document.addEventListener("DOMContentLoaded", ready, { once: true });
+  // Some players (Bilibili's, among others) catch every click on the page first and stop it there, so a button drawn over
+  // them never hears it. Omni hears clicks before the page does (on window, in the capture phase, registered before any
+  // page script runs) and runs its own buttons itself.
+  for (const type of ["click", "dblclick"]) window.addEventListener(type, (e) => {
+    if (!host || !root || !e.composedPath().includes(host) || e.detail === 0) return; // (keyboard clicks reach the button as usual)
+    const b = root.elementFromPoint(e.clientX, e.clientY)?.closest?.("button, .cell"), run = type === "click" ? b?.onclick : b?.ondblclick;
+    if (!b || b.disabled || typeof run !== "function") return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    run.call(b, e);
+  }, true);
   window.addEventListener("keydown", (e) => {
     if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyD" && e.shiftKey === !altD()) { e.preventDefault(); e.stopPropagation(); toggle(); }
   }, true);
