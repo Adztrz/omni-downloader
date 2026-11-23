@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.15.3
+// @version      1.15.5
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -346,11 +346,31 @@
   };
   function probe(it) {
     if (it.meta?.loaded) return Promise.resolve(it.meta);
+    // Bilibili refuses a request without its Referer, which a <video> can't send: read the file's header instead
+    if (BILI.test(it.url)) return peek(it).then((m) => (it.meta = m || { loaded: false }));
     return new Promise((resolve) => {
       const v = document.createElement("video"); v.muted = true; v.preload = "metadata";
       const done = () => { clearTimeout(t); it.meta = { w: v.videoWidth, h: v.videoHeight, d: v.duration, loaded: !!v.duration }; v.removeAttribute("src"); v.load(); resolve(it.meta); };
       const t = setTimeout(done, 8000); v.onloadedmetadata = done; v.onerror = done; v.src = it.url;
-    });
+    }).then((m) => m.loaded ? m : peek(it).then((p) => (it.meta = p || m)));
+  }
+  // a file's own header, from its first 64 KB, fetched with the page as Referer: its frame size, its length, and whether it
+  // has a picture at all (a sound-only file has none). For files a <video> can't open by itself.
+  function peek(it) {
+    const last = 65535;
+    const got = typeof GM_xmlhttpRequest === "function"
+      ? new Promise((ok, no) => GM_xmlhttpRequest({ method: "GET", url: it.url, responseType: "arraybuffer", timeout: 15000, headers: { Range: `bytes=0-${last}`, Referer: it.referer || location.href },
+          onload: (r) => r.status < 300 ? ok(r.response) : no(new Error(`HTTP ${r.status}`)), onerror: no, ontimeout: no }))
+      : fetch(it.url, { headers: { Range: `bytes=0-${last}` } }).then((r) => r.ok ? r.arrayBuffer() : Promise.reject(new Error(`HTTP ${r.status}`)));
+    return got.then((buf) => {
+      const u = new Uint8Array(buf, 0, Math.min(buf.byteLength, last + 1)), info = mp4Info(u);
+      if (!info) return null;
+      const d = dv(u), vide = info.traks.find((t) => t.handler === "vide");
+      let w = 0, h = 0;
+      if (vide) { const tk = find(u, vide.box, "tkhd"); w = d.getUint32(tk.end - 8) >>> 16; h = d.getUint32(tk.end - 4) >>> 16; }
+      const mv = find(u, info.moov, "mvhd"), v1 = u[mv.body] === 1, len = getN(d, mv.body + 4 + (v1 ? 20 : 12), v1) / (mvhdScale(u, info.moov) || 1);
+      return { w, h, d: len || NaN, loaded: true };
+    }).catch(() => null);
   }
   async function soundFor(it) {
     const key = assetKey(it.url), others = [...found.values()].filter((x) => x !== it && (x.kind === "video" || x.kind === "audio") && /^https?:/.test(x.url));
@@ -858,7 +878,7 @@
   let probing = Promise.resolve();
   function probeAll() {
     for (const it of found.values()) if (it.kind === "video" && !it.meta && !it.probing && !partOf.has(it.url) && /^https?:/.test(it.url)) {
-      it.probing = true; probing = probing.then(() => probe(it)).then(() => { if (soundOnly(it)) onChange(); });
+      it.probing = true; probing = probing.then(() => probe(it)).then(() => { retitle(it); if (soundOnly(it)) onChange(); });
     }
   }
   const groups = () => {
@@ -1525,6 +1545,7 @@
       pill.onpointerenter = () => clearTimeout(pillHide); pill.onpointerleave = () => hidePill(900);
       root.append(pill);
     }
+    probeAll(); // so the list knows sizes and sound-only files by the time it opens
     if (pop) return placePill(); // the list is open: it stays with its player
     if (pillFor !== v || pill.hidden) {
       const b = btn("", () => (pop ? closePop(true) : openPop()), "pb"), lbl = mk("span", "lbl"); lbl.append(mk("span", null, "Download this media"), svg("caret"));
@@ -1571,6 +1592,7 @@
   }
   function openPop() {
     if (!pill || !pillFor) return;
+    probeAll(); // sizes and sound-only files, as the panel does
     pop = { el: mk("div", "pop"), items: candidates(pillFor) };
     pop.el.setAttribute("role", "group"); pop.el.setAttribute("aria-label", "Media from this player");
     for (const it of pop.items) if (it.kind === "hls") hlsLoad(it);
@@ -1652,15 +1674,26 @@
   // ---------- start ----------
   const ready = () => { mount(); setTimeout(() => { try { scan(); } catch {} drawFab(); }, 1500); };
   if (document.body) ready(); else document.addEventListener("DOMContentLoaded", ready, { once: true });
-  // Some players (Bilibili's, among others) catch every click on the page first and stop it there, so a button drawn over
-  // them never hears it. Omni hears clicks before the page does (on window, in the capture phase, registered before any
-  // page script runs) and runs its own buttons itself.
+  // Some players (Bilibili's, among others) catch every click on the page first and stop it there, or cancel it between
+  // press and release, so a button drawn over them never hears it. Omni listens before the page does (on window, in the
+  // capture phase, registered before any page script runs): a press and release on the same Omni button runs it, and the
+  // click that may follow is swallowed so it doesn't run twice.
+  const ours = (e) => host && root && e.composedPath().includes(host) ? root.elementFromPoint(e.clientX, e.clientY)?.closest?.("button, .cell") || null : null;
+  let pressed = null, ranAt = 0, ranOn = null;
+  window.addEventListener("pointerdown", (e) => { pressed = e.button === 0 ? ours(e) : null; }, true);
+  window.addEventListener("pointerup", (e) => {
+    const b = e.button === 0 ? ours(e) : null, was = pressed; pressed = null;
+    if (!b || b !== was || b.disabled || typeof b.onclick !== "function") return;
+    ranAt = performance.now(); ranOn = b;
+    setTimeout(() => b.onclick.call(b, e)); // after the release has finished, as a click would
+  }, true);
   for (const type of ["click", "dblclick"]) window.addEventListener(type, (e) => {
-    if (!host || !root || !e.composedPath().includes(host) || e.detail === 0) return; // (keyboard clicks reach the button as usual)
-    const b = root.elementFromPoint(e.clientX, e.clientY)?.closest?.("button, .cell"), run = type === "click" ? b?.onclick : b?.ondblclick;
-    if (!b || b.disabled || typeof run !== "function") return;
-    e.stopImmediatePropagation(); e.preventDefault();
-    run.call(b, e);
+    if (e.detail === 0) return; // keyboard clicks reach the button as usual
+    const b = ours(e);
+    if (!b) return;
+    if (type === "click") { if (b === ranOn && performance.now() - ranAt < 800) { e.stopImmediatePropagation(); e.preventDefault(); } return; }
+    if (b.disabled || typeof b.ondblclick !== "function") return;
+    e.stopImmediatePropagation(); e.preventDefault(); b.ondblclick.call(b, e);
   }, true);
   window.addEventListener("keydown", (e) => {
     if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyD" && e.shiftKey === !altD()) { e.preventDefault(); e.stopPropagation(); toggle(); }
