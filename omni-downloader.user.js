@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.15.5
+// @version      1.15.6
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -1520,7 +1520,7 @@
   // Pointing at a video (or an audio player) shows Omni's logo inside its top-right corner; pointing at the logo widens it
   // to "Download this media". It opens the panel on that media's row, focused and lit, ready for Save or Ghost. A stream
   // the player feeds through a blob: address is matched to the stream found on the network.
-  let pill = null, pillFor = null, pillHide = 0, pillRaf = 0;
+  let pill = null, pillFor = null, pillRect = null, pillHide = 0, pillRaf = 0;
   const pillOn = () => store.get("pill", true);
   function mediaAt(x, y) {
     for (const v of allMedia()) {
@@ -1558,8 +1558,10 @@
   }
   function placePill() {
     if (!pill || pill.hidden || !pillFor) return;
+    // some players (Bilibili's) swap in a new <video> as they play: follow it to the one now in the same place
+    if (!pillFor.isConnected && pillRect) { mediaCache = null; const v = mediaAt(pillRect.left + pillRect.width / 2, pillRect.top + pillRect.height / 2); if (v) pillFor = v; }
     if (!pillFor.isConnected || document.fullscreenElement) return hidePill(0, true);
-    const r = pillFor.getBoundingClientRect(), w = pill.offsetWidth || 200, h = pill.offsetHeight || 34;
+    const r = pillFor.getBoundingClientRect(), w = pill.offsetWidth || 200, h = pill.offsetHeight || 34; pillRect = r;
     if (r.bottom < 0 || r.top > innerHeight) return hidePill(0, true);
     // inside the video's top-right corner, as just the logo until pointed at: the space under a video is where sites put
     // their own buttons (Instagram's like, comment and share), and the top middle is where download extensions such as
@@ -1599,7 +1601,7 @@
     pill.append(pop.el); pill.querySelector(".pb").setAttribute("aria-expanded", "true");
     renderPop(); placePill();
     pop.el.querySelector("button")?.focus({ preventScroll: true });
-    popTick = setInterval(renderPop, 500); // progress and results, as they come
+    popTick = setInterval(() => { renderPop(); placePill(); }, 500); // progress and results, as they come
   }
   function closePop(refocus) {
     if (!pop) return;
@@ -1657,10 +1659,11 @@
   }
   const watchPointer = (e) => {
     if (!pillOn() || (pillRaf && e.type !== "pointerdown")) return;
-    const x = e.clientX, y = e.clientY, touch = e.pointerType === "touch";
+    // where the event went is only known while it's being dispatched (composedPath() is empty afterwards), so read it now
+    const x = e.clientX, y = e.clientY, touch = e.pointerType === "touch", onOurs = !!host && !!e.composedPath?.().includes(host);
+    if (onOurs) return; // on the pill, its list or the panel
     pillRaf = requestAnimationFrame(() => {
       pillRaf = 0;
-      if (e.composedPath?.().includes(host)) return; // on the pill or the panel
       if (pop) { if (e.type === "pointerdown") { closePop(); hidePill(900); } return; }
       const v = mediaAt(x, y);
       if (v) { showPill(v); if (touch) hidePill(4000); } else if (pill && !pill.hidden) hidePill(900);
