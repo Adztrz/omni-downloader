@@ -10,12 +10,13 @@ Point at a video or an audio player on the page and a **Download this media** bu
 
 Each file or stream has one main button, **Save** or **Ghost**, and a **▾** beside it with the rest: save in the browser, send to Ghost Downloader, copy the address, copy an ffmpeg command, and for HLS *keep as .ts*. Whichever of Save and Ghost you pick from the ▾ becomes the main button from then on.
 
-**Trim before saving** (in the ▾ of a stream or video file) sets a start and an end. Type the times, or press **Now** beside each to take the time from the page's player while you scrub it. Then:
-- an **HLS stream** downloads only the parts inside that stretch, so a few minutes of a long video cost a few minutes of download. The cut lands on part edges, usually within 2-6 seconds;
-- a **fragmented MP4** (what DASH players and Instagram serve) is cut at its fragment edges after download;
-- a **plain MP4** can't be cut in the browser without re-encoding, so it's saved whole and the row says so. Its **Copy ffmpeg command (exact cut)** cuts to the exact frame.
+**Trim before saving** (in the ▾ of a stream or video file) sets a start and an end. Type the times, or press **Now** beside each to take the time from the page's player while you scrub it. The cut is made by [Mediabunny](https://mediabunny.dev) (MPL-2.0), which copies the video and sound without re-encoding and starts playback at the time you chose:
+- an **HLS stream** downloads only the parts around that stretch, so a few minutes of a long video cost a few minutes of download;
+- an **MP4 file**, plain or fragmented, is cut after download.
 
-Nothing is re-encoded in the browser, and the saved file's name carries the times (`… 0.20-0.30.mp4`).
+If a file can't be cut that way, Omni falls back to cutting at fragment edges, or saves it whole and says so; its **Copy ffmpeg command (exact cut)** always cuts exactly. Ghost Downloader can't trim, so a trimmed row saves in the browser.
+
+The saved file's name carries the times (`… 0.20-0.30.mp4`).
 
 It works from the keyboard: ↓ from the filter goes into the list, ↑ and ↓ move between rows, ← and → between tabs and between images, Space selects an image and Enter saves it. Saves, Ghost sends, copies and errors are announced to screen readers.
 
@@ -60,5 +61,6 @@ To save video and audio files directly, Tampermonkey may need them allowed in Se
   - It reads the page itself for images and media elements.
 - Files are fetched through `GM_xmlhttpRequest`, so other sites' files work.
 - The panel's fonts (Inter and JetBrains Mono) are bundled with `@resource`, downloaded once when the script is installed, so pages make no font requests.
+- Trims are cut by [Mediabunny](https://github.com/Vanilagy/mediabunny), loaded with `@require` (pinned, hash-checked).
 - MPEG-TS is turned into MP4 by [mux.js](https://github.com/videojs/mux.js), and ZIPs are made by [fflate](https://github.com/101arrowz/fflate). Both are loaded with `@require`.
 - Nothing is sent anywhere except the requests for the files themselves, and, when you press Ghost, the file's address and headers to Ghost Downloader on your own computer (127.0.0.1).

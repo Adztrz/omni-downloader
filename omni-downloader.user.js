@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.14.1
+// @version      1.15
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -23,6 +23,7 @@
 // @connect      127.0.0.1
 // @require      https://cdn.jsdelivr.net/npm/mux.js@6.3.0/dist/mux.min.js
 // @require      https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js
+// @require      https://cdn.jsdelivr.net/npm/mediabunny@1.65.0/dist/bundles/mediabunny.min.cjs#sha256=4ydyAcLHwTUf10QCyTliytO6HEn1AJFzNGVDDJeQOTU=
 // @resource     inter https://cdn.jsdelivr.net/npm/@fontsource-variable/inter@5.1.0/files/inter-latin-wght-normal.woff2
 // @resource     mono https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.1.1/files/jetbrains-mono-latin-wght-normal.woff2
 // ==/UserScript==
@@ -298,14 +299,18 @@
     let untrimmed = false;
     const saveBlob = (blob, nm) => { // the same save, cut first when a stretch is chosen and the file allows it
       if (!trim || !/^video|^audio\/mp4/.test(blob.type)) return saveFile(blob, nm);
-      return blob.arrayBuffer().then((buf) => {
+      return blob.arrayBuffer().then(async (buf) => {
+        const named = nm.replace(/(\.\w+)$/, ` ${trimName(trim)}$1`);
+        ui.progress(1, "Cutting…");
+        const exact = await cutExact(buf, trim.start, trim.end);
+        if (exact) return saveFile(new Blob([exact], { type: blob.type }), named);
         const cut = trimFrag(new Uint8Array(buf), trim.start, trim.end);
-        if (cut) return saveFile(new Blob(cut, { type: blob.type }), nm.replace(/(\.\w+)$/, ` ${trimName(trim)}$1`));
+        if (cut) return saveFile(new Blob(cut, { type: blob.type }), named);
         untrimmed = true; saveFile(blob, nm);
       });
     };
     const note = await saveVideoInner(it, name, ui, saveBlob);
-    return untrimmed ? `${note ? note + ". " : ""}Saved whole: a plain MP4 can't be cut in the browser. Copy the ffmpeg command for an exact cut` : note;
+    return untrimmed ? `${note ? note + ". " : ""}Saved whole: this file couldn't be cut in the browser. Copy the ffmpeg command for an exact cut` : note;
   }
   async function saveVideoInner(it, name, ui, saveBlob) {
     // where the sound is likely a file of its own (an Instagram or Bilibili id), the picture fills the first half of the bar
@@ -491,6 +496,9 @@
       else if (l.startsWith("#EXT-X-BYTERANGE:")) range = byterange(l.slice(17));
       else if (!l.startsWith("#")) { segs.push({ url: abs(l, base), key, seqNo: seq + segs.length, range, t: dur - len, d: len }); range = null; len = 0; }
     }
+    // a stream's pieces (its init segment, and parts some sites name .mp4) aren't videos of their own: keep them off the list
+    let hid = false; for (const x of [map, ...segs]) if (x?.url) { const u = whole(x.url); if (!partOf.has(u)) { partOf.add(u); hid = hid || found.has(u); } }
+    if (hid) onChange();
     return { segs, map, dur, live: !/#EXT-X-ENDLIST/.test(text), drm };
   }
   const keyCache = new Map();
@@ -542,14 +550,19 @@
     const trim = choice.trim && trimSegs(media, choice.trim);
     const parts = await getSegments(media, ref, signal, (d, n) => ui.progress(d / n, `${d} / ${n} parts`));
     if (media.map) parts.unshift(await getPart(media.map, ref, signal));
-    const base = clean(it.title || document.title) + (choice.res ? ` ${choice.res.split("x")[1]}p` : "") + (trim ? ` ${trimName(trim)}` : "");
+    const base = clean(it.title || document.title) + (choice.res ? ` ${choice.res.split("x")[1]}p` : "") + (trim ? ` ${trimName(choice.trim)}` : "");
+    // the parts cover a little more than the stretch (they start and end on part edges): cut that down to the keyframe
+    const exact = async (buf) => trim ? cutExact(buf, choice.trim.start - trim.start, choice.trim.end - trim.start, true) : null;
     if (media.map) { // fMP4: already MP4 pieces; a trimmed part is retimed to start at 0
-      const cut = trim && trimFrag(concat(parts.map((x) => new Uint8Array(x))), -Infinity, Infinity);
-      saveBlob(new Blob(cut || parts, { type: "video/mp4" }), `${base}.mp4`); return media;
+      const whole = concat(parts.map((x) => new Uint8Array(x)));
+      if (trim) ui.progress(1, "Cutting…");
+      const ex = await exact(whole.buffer), cut = !ex && trim && trimFrag(whole, -Infinity, Infinity);
+      saveBlob(new Blob(ex ? [ex] : cut || parts, { type: "video/mp4" }), `${base}.mp4`); return media;
     }
     ui.progress(1, "Joining into MP4…"); await new Promise((r) => setTimeout(r, 30));
-    const mp4 = choice.asTs ? null : tsToMp4(parts);
-    if (mp4) saveBlob(mp4, `${base}.mp4`); else saveBlob(new Blob(parts, { type: "video/mp2t" }), `${base}.ts`);
+    const mp4 = choice.asTs ? null : tsToMp4(parts), ex = mp4 && trim ? await exact(await mp4.arrayBuffer()) : null;
+    if (ex) saveBlob(new Blob([ex], { type: "video/mp4" }), `${base}.mp4`);
+    else if (mp4) saveBlob(mp4, `${base}.mp4`); else saveBlob(new Blob(parts, { type: "video/mp2t" }), `${base}.ts`);
     return media;
   }
 
@@ -578,6 +591,23 @@
   const trimName = (t) => `${hms(t.start)}-${hms(t.end)}`.replace(/:/g, ".");
   // "1:02:10", "62:10", "3730", "1:02:10.5" → seconds
   const parseTime = (v) => { const p = String(v).trim().split(":"); if (!p[0] || p.length > 3 || p.some((x) => !/^\d+(\.\d+)?$/.test(x))) return NaN; return p.reduce((a, x) => a * 60 + +x, 0); };
+  // the exact cut: Mediabunny (MPL-2.0) reads the MP4, plain or fragmented, and copies the packets of [start, end] into a
+  // new MP4 without re-encoding, starting from the keyframe at or just before the start, retimed to 0. Null when it can't
+  // (no Mediabunny, an odd file), and then the fragment cut or the whole file is the fallback.
+  // (relative: the times count from the file's own first timestamp, for stream parts that keep their place in the stream)
+  async function cutExact(buf, start, end, relative) {
+    const MB = W.Mediabunny || window.Mediabunny || (typeof Mediabunny !== "undefined" ? Mediabunny : null);
+    if (!MB?.Conversion) return null;
+    try {
+      const input = new MB.Input({ formats: MB.ALL_FORMATS, source: new MB.BufferSource(buf) });
+      if (relative) { const t0 = await input.getFirstTimestamp(); start += t0; end += t0; }
+      const output = new MB.Output({ format: new MB.Mp4OutputFormat({ fastStart: "in-memory" }), target: new MB.BufferTarget() });
+      const conv = await MB.Conversion.init({ input, output, trim: { start: Math.max(0, start), end }, copy: { mode: "forced", shiftTolerance: Infinity, boundaryPolicy: "expand" } });
+      if (!conv.isValid || conv.discardedTracks?.length) return null; // never drop the sound to make a cut
+      await conv.execute();
+      return output.target.buffer;
+    } catch (e) { console.warn("[omni] exact cut failed:", e); return null; }
+  }
   function trimFrag(u, start, end) {
     const info = mp4Info(u); if (!info?.frag) return null;
     const d = dv(u), scales = Object.fromEntries(info.traks.map((t) => [trackId(u, t.box), mdhdScale(u, t.box)]));
@@ -632,17 +662,6 @@
     }
     return parts;
   }
-  // whether a file is fragmented, from its first 256 KB (a plain MP4 keeps its index whole, often at the end)
-  function fragKind(it) {
-    if (it.fragP) return it.fragP;
-    const read = (buf) => { const u = new Uint8Array(buf), top = boxes(u), moov = top.find((b) => b.type === "moov"); return top.some((b) => b.type === "moof") || (moov && moov.end <= u.length && find(u, moov, "mvex")) ? "frag" : "plain"; };
-    it.fragP = (typeof GM_xmlhttpRequest === "function"
-      ? new Promise((ok, no) => GM_xmlhttpRequest({ method: "GET", url: it.url, responseType: "arraybuffer", headers: { Range: "bytes=0-262143", Referer: it.referer || location.href }, timeout: 20000,
-        onload: (r) => r.status < 300 ? ok(r.status === 206 ? r.response : r.response.slice(0, 262144)) : no(new Error(`HTTP ${r.status}`)), onerror: () => no(new Error("network error")), ontimeout: () => no(new Error("timed out")) }))
-      : fetch(it.url, { headers: { Range: "bytes=0-262143" } }).then((r) => r.arrayBuffer())).then(read, () => "unknown");
-    return it.fragP;
-  }
-
   // ---------- the panel ----------
   // the ERP Dock's look: Faust's Night Ledger palette, a 48px square button, a panel that opens as a halftone wave of dots
   // from the button's corner, a filter bar on top, segmented tabs, rows that light up on hover
@@ -1150,7 +1169,7 @@
   function rowOf(it, first) {
     const job = jobs.get(it.url), via = store.get("via", "save");
     const sig = JSON.stringify([first, via, it.kind, soundOnly(it), !!it.variants, it.variants?.length, it.pick, !!it.asTs, it.err, it.drm, it.dur,
-      job && [job.at, !!job.done, job.err], it.status?.at, it.trim, it.trimOpen, it.frag]);
+      job && [job.at, !!job.done, job.err], it.status?.at, it.trim, it.trimOpen]);
     const had = rows.get(it.url);
     if (had && had.sig === sig) return had.el;
     const row = mk("div", "row m"), info = mk("div", "info");
@@ -1245,7 +1264,6 @@
   }
   function openTrim(it) {
     it.trimOpen = true; it.trimDraft = { start: it.trim?.start ?? 0, end: it.trim?.end ?? (lengthOf(it) || 60) };
-    if (it.kind === "video" && !it.frag) fragKind(it).then((k) => { it.frag = k; draw(); });
     draw(); main.querySelector(`[data-k="${CSS.escape(`row:${it.url}:start`)}"]`)?.focus();
   }
   function trimEditor(it) {
@@ -1272,9 +1290,8 @@
     const cancel = btn("Cancel", () => { it.trimOpen = false; draw(); main.querySelector(`[data-k="${CSS.escape(`${k}:main`)}"]`)?.focus(); }, "b sm"); cancel.dataset.k = `${k}:cancel`;
     const row = mk("div", "tr"); row.append(field("Start", "start"), field("End", "end"));
     const btns = mk("div", "tr"); btns.append(done, cancel);
-    const note = it.kind === "video" ? mk("div", "msg", it.frag === "plain" ? "This is a plain MP4: it can't be cut in the browser, so Save gets the whole file. Copy the ffmpeg command for an exact cut."
-      : it.frag === "frag" ? "Cut at the nearest fragment edges, a few seconds either side." : "Checking whether this file can be cut here…")
-      : mk("div", "msg", "Only the parts inside this stretch are downloaded. The cut lands on part edges, a few seconds either side.");
+    const note = it.kind === "video" ? mk("div", "msg", "Cut without re-encoding, from the keyframe at or just before the start (usually under 2 seconds early).")
+      : mk("div", "msg", "Only the parts around this stretch are downloaded, then cut without re-encoding from the keyframe at or just before the start.");
     box.append(row, note, btns, err); return box;
   }
   function rowName(it) {
