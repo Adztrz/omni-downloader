@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.15
+// @version      1.15.1
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -768,15 +768,19 @@
     button:focus-visible, select:focus-visible, input:focus-visible, .cell:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
     .empty p { margin: 0; }
     /* the button under a video on the page */
-    .pill { position: fixed; z-index: 2147483645; display: flex; align-items: center; height: 34px; padding: 0 4px 0 2px; border-radius: 9px; background: var(--card); color: var(--paper);
+    .pill { position: fixed; z-index: 2147483647; display: flex; align-items: center; height: 34px; padding: 0 4px 0 2px; border-radius: 9px; background: var(--card); color: var(--paper);
       box-shadow: inset 0 0 0 1px var(--edge), 0 10px 24px rgba(0,0,0,.35), 0 2px 4px rgba(0,0,0,.3); animation: pill-in .18s var(--out) both; }
     .pill[hidden] { display: none; }
     @keyframes pill-in { from { opacity: 0; transform: translateY(-4px); } }
     .pill .pb { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 6px; border: 0; border-radius: 7px; background: none; color: inherit; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
     .pill .pb:hover { background: var(--raised); } .pill .pb svg { width: 22px; height: 22px; flex: none; }
-    .pill { flex-direction: column; align-items: stretch; height: auto; padding: 2px; }
-    .pill .pb { height: 30px; } .pill .pb svg:last-child { width: 16px; height: 16px; margin-left: 2px; color: var(--muted); transition: transform .2s var(--out); }
-    .pill .pb[aria-expanded="true"] svg:last-child { transform: rotate(180deg); }
+    .pill { flex-direction: column; align-items: flex-end; height: auto; padding: 2px; }
+    .pill .pb .lbl { display: inline-flex; align-items: center; gap: 6px; max-width: 0; overflow: hidden; white-space: nowrap; opacity: 0; transition: max-width .22s var(--out), opacity .18s; }
+    .pill:hover .pb .lbl, .pill .pb:focus-visible .lbl, .pill .pb[aria-expanded="true"] .lbl { max-width: 220px; opacity: 1; }
+    .pill .pb { padding: 0 6px; } .pill:hover .pb, .pill .pb[aria-expanded="true"], .pill .pb:focus-visible { padding: 0 10px 0 6px; }
+    @media (prefers-reduced-motion: reduce) { .pill .pb .lbl { transition: none; } }
+    .pill .pb { height: 30px; } .pill .pb .lbl svg { width: 16px; height: 16px; margin-left: 2px; color: var(--muted); transition: transform .2s var(--out); }
+    .pill .pb[aria-expanded="true"] .lbl svg { transform: rotate(180deg); }
     .pop { width: min(380px, calc(100vw - 32px)); max-height: min(360px, 60vh); overflow: auto; margin-top: 4px; padding: 6px 6px 8px; border-top: 1px solid var(--hair); display: grid; gap: 6px; animation: pill-in .16s var(--out) both; }
     .pill.up { flex-direction: column-reverse; } .pill.up .pop { margin: 0 0 4px; border: 0; border-bottom: 1px solid var(--hair); }
     .plist { display: grid; gap: 2px; } .plist > .msg { margin: 6px 4px; }
@@ -1478,7 +1482,8 @@
   }
 
   // ---------- a button under each video on the page ----------
-  // Pointing at a video (or an audio player) shows "Download this media" inside its top-left corner. It opens the panel on that media's row, focused and lit, ready for Save or Ghost. A stream
+  // Pointing at a video (or an audio player) shows Omni's logo inside its top-right corner; pointing at the logo widens it
+  // to "Download this media". It opens the panel on that media's row, focused and lit, ready for Save or Ghost. A stream
   // the player feeds through a blob: address is matched to the stream found on the network.
   let pill = null, pillFor = null, pillHide = 0, pillRaf = 0;
   const pillOn = () => store.get("pill", true);
@@ -1507,7 +1512,8 @@
     }
     if (pop) return placePill(); // the list is open: it stays with its player
     if (pillFor !== v || pill.hidden) {
-      const b = btn("", () => (pop ? closePop(true) : openPop()), "pb"); b.append(svg("down"), "Download this media", svg("caret"));
+      const b = btn("", () => (pop ? closePop(true) : openPop()), "pb"), lbl = mk("span", "lbl"); lbl.append(mk("span", null, "Download this media"), svg("caret"));
+      b.append(svg("down"), lbl); b.setAttribute("aria-label", "Download this media");
       b.setAttribute("aria-expanded", "false"); b.setAttribute("aria-haspopup", "true"); b.title = "Choose what to save from this player";
       b.onkeydown = (e) => { if (e.key === "Escape" && pop) { e.preventDefault(); e.stopPropagation(); closePop(true); } };
       pill.replaceChildren(b); pill.hidden = false; pillFor = v;
@@ -1519,12 +1525,13 @@
     if (!pillFor.isConnected || document.fullscreenElement) return hidePill(0, true);
     const r = pillFor.getBoundingClientRect(), w = pill.offsetWidth || 200, h = pill.offsetHeight || 34;
     if (r.bottom < 0 || r.top > innerHeight) return hidePill(0, true);
-    // inside the video's top-left corner: the space under a video is where sites put their own buttons (Instagram's like,
-    // comment and share), and a corner of the picture is the one place nearly every player leaves free
+    // inside the video's top-right corner, as just the logo until pointed at: the space under a video is where sites put
+    // their own buttons (Instagram's like, comment and share), and the top middle is where download extensions such as
+    // Ghost Downloader's put theirs. Anchored by its right edge, so it widens leftwards into the picture.
     const top = Math.min(Math.max(8, r.top + 10), innerHeight - h - 8);
     pill.style.top = `${top}px`;
     if (pop) { const ph = pop.el.offsetHeight; pill.classList.toggle("up", top + h + 6 + ph > innerHeight - 8 && top - ph - 6 > 8); }
-    pill.style.left = `${Math.max(8, Math.min(r.left + 10, innerWidth - w - 8))}px`;
+    pill.style.left = "auto"; pill.style.right = `${Math.max(8, innerWidth - Math.min(r.right, innerWidth) + 10)}px`;
   }
   function hidePill(ms, force) {
     if (pop && !force) return; // an open list stays until it's closed
