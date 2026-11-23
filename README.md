@@ -61,6 +61,6 @@ To save video and audio files directly, Tampermonkey may need them allowed in Se
   - It reads the page itself for images and media elements.
 - Files are fetched through `GM_xmlhttpRequest`, so other sites' files work.
 - The panel's fonts (Inter and JetBrains Mono) are bundled with `@resource`, downloaded once when the script is installed, so pages make no font requests.
-- Trims are cut by [Mediabunny](https://github.com/Vanilagy/mediabunny), loaded with `@require` (pinned, hash-checked).
+- Trims are cut by [Mediabunny](https://github.com/Vanilagy/mediabunny), bundled as a `@resource` (pinned, hash-checked) and started only when you trim, so it can never stop the script from loading.
 - MPEG-TS is turned into MP4 by [mux.js](https://github.com/videojs/mux.js), and ZIPs are made by [fflate](https://github.com/101arrowz/fflate). Both are loaded with `@require`.
 - Nothing is sent anywhere except the requests for the files themselves, and, when you press Ghost, the file's address and headers to Ghost Downloader on your own computer (127.0.0.1).

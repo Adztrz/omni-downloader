@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.15.1
+// @version      1.15.2
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -18,13 +18,14 @@
 // @grant        GM_setValue
 // @grant        GM_cookie
 // @grant        GM_getResourceURL
+// @grant        GM_getResourceText
 // @grant        unsafeWindow
 // @connect      *
 // @connect      127.0.0.1
 // @require      https://cdn.jsdelivr.net/npm/mux.js@6.3.0/dist/mux.min.js
 // @require      https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js
-// @require      https://cdn.jsdelivr.net/npm/mediabunny@1.65.0/dist/bundles/mediabunny.min.cjs#sha256=4ydyAcLHwTUf10QCyTliytO6HEn1AJFzNGVDDJeQOTU=
 // @resource     inter https://cdn.jsdelivr.net/npm/@fontsource-variable/inter@5.1.0/files/inter-latin-wght-normal.woff2
+// @resource     mediabunny https://cdn.jsdelivr.net/npm/mediabunny@1.65.0/dist/bundles/mediabunny.min.cjs#sha256-4ydyAcLHwTUf10QCyTliytO6HEn1AJFzNGVDDJeQOTU=
 // @resource     mono https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.1.1/files/jetbrains-mono-latin-wght-normal.woff2
 // ==/UserScript==
 
@@ -595,8 +596,22 @@
   // new MP4 without re-encoding, starting from the keyframe at or just before the start, retimed to 0. Null when it can't
   // (no Mediabunny, an odd file), and then the fragment cut or the whole file is the fallback.
   // (relative: the times count from the file's own first timestamp, for stream parts that keep their place in the stream)
+  // Mediabunny comes as a @resource (fetched once at install, as data) and is started only when a trim needs it, so a
+  // problem with it can never stop the rest of the script from loading
+  let mbLib;
+  function mediabunny() {
+    if (mbLib !== undefined) return mbLib;
+    mbLib = W.Mediabunny || window.Mediabunny || null;
+    if (!mbLib && typeof GM_getResourceText === "function") {
+      try {
+        const code = GM_getResourceText("mediabunny"), mod = { exports: {} };
+        if (code) mbLib = new Function("module", "exports", `${code}\n;return typeof Mediabunny !== "undefined" ? Mediabunny : module.exports;`)(mod, mod.exports);
+      } catch (e) { console.warn("[omni] Mediabunny couldn't start:", e); mbLib = null; }
+    }
+    return mbLib;
+  }
   async function cutExact(buf, start, end, relative) {
-    const MB = W.Mediabunny || window.Mediabunny || (typeof Mediabunny !== "undefined" ? Mediabunny : null);
+    const MB = mediabunny();
     if (!MB?.Conversion) return null;
     try {
       const input = new MB.Input({ formats: MB.ALL_FORMATS, source: new MB.BufferSource(buf) });
