@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.14
+// @version      1.14.1
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -1461,8 +1461,7 @@
   }
 
   // ---------- a button under each video on the page ----------
-  // Pointing at a video (or an audio player) shows "Download this media" just under it, or inside its top edge when
-  // there's no room below. It opens the panel on that media's row, focused and lit, ready for Save or Ghost. A stream
+  // Pointing at a video (or an audio player) shows "Download this media" inside its top-left corner. It opens the panel on that media's row, focused and lit, ready for Save or Ghost. A stream
   // the player feeds through a blob: address is matched to the stream found on the network.
   let pill = null, pillFor = null, pillHide = 0, pillRaf = 0;
   const pillOn = () => store.get("pill", true);
@@ -1471,7 +1470,7 @@
       if (v.tagName === "AUDIO" && !v.controls) continue;
       const r = v.getBoundingClientRect();
       if (r.width < 200 || r.height < 30 || getComputedStyle(v).visibility === "hidden") continue;
-      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom + 48) return v;
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return v;
     }
     return null;
   }
@@ -1503,10 +1502,12 @@
     if (!pillFor.isConnected || document.fullscreenElement) return hidePill(0, true);
     const r = pillFor.getBoundingClientRect(), w = pill.offsetWidth || 200, h = pill.offsetHeight || 34;
     if (r.bottom < 0 || r.top > innerHeight) return hidePill(0, true);
-    const below = r.bottom + 8 + h <= innerHeight - 8;
-    pill.style.top = `${below ? r.bottom + 8 : Math.max(8, r.top + 8)}px`;
-    if (pop) { const ph = pop.el.offsetHeight, top = below ? r.bottom + 8 : Math.max(8, r.top + 8); pill.classList.toggle("up", top + h + 6 + ph > innerHeight - 8 && top - ph - 6 > 8); }
-    pill.style.left = `${Math.max(8, Math.min(r.left + (below ? 0 : 8), innerWidth - w - 8))}px`;
+    // inside the video's top-left corner: the space under a video is where sites put their own buttons (Instagram's like,
+    // comment and share), and a corner of the picture is the one place nearly every player leaves free
+    const top = Math.min(Math.max(8, r.top + 10), innerHeight - h - 8);
+    pill.style.top = `${top}px`;
+    if (pop) { const ph = pop.el.offsetHeight; pill.classList.toggle("up", top + h + 6 + ph > innerHeight - 8 && top - ph - 6 > 8); }
+    pill.style.left = `${Math.max(8, Math.min(r.left + 10, innerWidth - w - 8))}px`;
   }
   function hidePill(ms, force) {
     if (pop && !force) return; // an open list stays until it's closed
