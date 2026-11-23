@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Omni Downloader
 // @namespace    https://github.com/Adztrz
-// @version      1.13.3
+// @version      1.14
 // @description  Finds the images, videos and audio on any page, including HLS (m3u8) streams the player loads, and saves them: one file, a ZIP of many, or a whole HLS video joined into one MP4. Alt+Shift+D opens it. Can hand files and streams to Ghost Downloader.
 // @author       Adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/omni-downloader/master/logo-128.png
@@ -83,6 +83,8 @@
     if (kind !== "hls" && kind !== "dash" && SEGMENT.test(url) && !BILI.test(url)) return;
     if (/^data:/.test(url) && url.length < 3000) return; // tiny inline icons
     const old = found.get(url), item = { url, kind, referer: location.href, title: document.title, ...old, ...extra };
+    // when it last loaded: a player fed through blob: is matched to what loaded most recently while it played
+    const seenAt = extra.seen ?? performance.now(); if (old) old.seen = Math.max(old.seen || 0, seenAt); item.seen = Math.max(old?.seen || 0, seenAt);
     if (old && old.kind !== "image" && kind === "image") item.kind = old.kind; // a poster stays a poster only if nothing better
     if (!old || extra.w > (old.w || 0) || kind !== old.kind) { found.set(url, item); changed(item); }
   }
@@ -101,7 +103,7 @@
 
   // ---------- watching the network ----------
   try {
-    new PerformanceObserver((l) => { for (const e of l.getEntries()) add(e.name); }).observe({ type: "resource", buffered: true });
+    new PerformanceObserver((l) => { for (const e of l.getEntries()) add(e.name, null, { seen: e.responseEnd || e.startTime }); }).observe({ type: "resource", buffered: true });
   } catch {}
   // playlists whose address doesn't say m3u8: look at the answers' first bytes
   try {
@@ -152,9 +154,26 @@
   // web-component players keep theirs there, out of reach of a plain querySelectorAll). Kept for a second, since the
   // button under videos asks on every pointer move.
   let mediaCache = null, mediaAt0 = 0;
+  // which files each player was loading: when a player says it's buffering, the media that arrived in the moment before
+  // count towards it. A player fed through blob: never names its file, and this is how the button under it finds it.
+  const assoc = new WeakMap(), watched = new WeakSet();
+  const LOAD_EVENTS = ["loadstart", "loadedmetadata", "loadeddata", "progress", "canplay", "waiting", "playing", "seeking"];
+  function noteLoad(e) {
+    const v = e.target, at = performance.now();
+    if (!(v instanceof HTMLMediaElement)) return;
+    // a moment later, so the network entry for what it just loaded has arrived too
+    setTimeout(() => {
+      let m = assoc.get(v); if (!m) assoc.set(v, m = new Map());
+      for (const it of found.values()) if (it.kind !== "image" && it.seen && it.seen > at - 1500 && it.seen < at + 600) m.set(it.url, (m.get(it.url) || 0) + 1);
+    }, 700);
+  }
+  // media events don't bubble, but they pass through the document on the way down: every player in the page, from the start
+  for (const t of LOAD_EVENTS) document.addEventListener(t, noteLoad, { capture: true, passive: true });
+  // (a player inside shadow DOM doesn't pass its events through the document, so it's watched itself once found)
+  function watch(v) { if (watched.has(v) || v.getRootNode() === document) return; watched.add(v); for (const t of LOAD_EVENTS) v.addEventListener(t, noteLoad, { passive: true }); }
   function allMedia() {
     if (mediaCache && performance.now() - mediaAt0 < 1000) return mediaCache;
-    const out = [], walk = (r) => { for (const e of r.querySelectorAll("*")) { if (e.tagName === "VIDEO" || e.tagName === "AUDIO") out.push(e); if (e.shadowRoot) walk(e.shadowRoot); } };
+    const out = [], walk = (r) => { for (const e of r.querySelectorAll("*")) { if (e.tagName === "VIDEO" || e.tagName === "AUDIO") { out.push(e); watch(e); } if (e.shadowRoot) walk(e.shadowRoot); } };
     try { walk(document); } catch {}
     mediaAt0 = performance.now(); return (mediaCache = out);
   }
@@ -734,8 +753,20 @@
       box-shadow: inset 0 0 0 1px var(--edge), 0 10px 24px rgba(0,0,0,.35), 0 2px 4px rgba(0,0,0,.3); animation: pill-in .18s var(--out) both; }
     .pill[hidden] { display: none; }
     @keyframes pill-in { from { opacity: 0; transform: translateY(-4px); } }
-    .pill button { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 6px; border: 0; border-radius: 7px; background: none; color: inherit; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
-    .pill button:hover { background: var(--raised); } .pill button svg { width: 22px; height: 22px; flex: none; }
+    .pill .pb { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 6px; border: 0; border-radius: 7px; background: none; color: inherit; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+    .pill .pb:hover { background: var(--raised); } .pill .pb svg { width: 22px; height: 22px; flex: none; }
+    .pill { flex-direction: column; align-items: stretch; height: auto; padding: 2px; }
+    .pill .pb { height: 30px; } .pill .pb svg:last-child { width: 16px; height: 16px; margin-left: 2px; color: var(--muted); transition: transform .2s var(--out); }
+    .pill .pb[aria-expanded="true"] svg:last-child { transform: rotate(180deg); }
+    .pop { width: min(380px, calc(100vw - 32px)); max-height: min(360px, 60vh); overflow: auto; margin-top: 4px; padding: 6px 6px 8px; border-top: 1px solid var(--hair); display: grid; gap: 6px; animation: pill-in .16s var(--out) both; }
+    .pill.up { flex-direction: column-reverse; } .pill.up .pop { margin: 0 0 4px; border: 0; border-bottom: 1px solid var(--hair); }
+    .plist { display: grid; gap: 2px; } .plist > .msg { margin: 6px 4px; }
+    .pi { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px; padding: 8px 6px; border-radius: 8px; } .pi:hover { background: var(--raised); }
+    .mth { position: relative; width: 88px; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: #000; box-shadow: inset 0 0 0 1px var(--hair); }
+    .mth video, .mth img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .mth[data-note]::after { content: attr(data-note); position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+    .pt { display: grid; gap: 3px; min-width: 0; } .pt .t { color: var(--paper); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; } .pt .meta { color: var(--body); font: 12px/1.4 "Omni Mono", "JetBrains Mono", ui-monospace, monospace; }
+    .pa { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; } .pop > .lnk { justify-self: start; margin: 2px 6px 0; }
     .pill small { color: var(--muted); font: 12px "Omni Mono", "JetBrains Mono", ui-monospace, monospace; padding-right: 6px; }
     .trim { display: grid; gap: 8px; margin-top: 4px; padding: 10px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
     .trim .tr { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
@@ -1458,28 +1489,99 @@
       pill.onpointerenter = () => clearTimeout(pillHide); pill.onpointerleave = () => hidePill(900);
       root.append(pill);
     }
-    const it = itemFor(v);
-    if (pillFor !== v || pill.hidden || pill.dataset.url !== (it?.url || "")) {
-      const b = btn("", () => { hidePill(0); openAt(it); }, ""); b.append(svg("down"), it ? "Download this media" : "Find media");
-      b.title = it ? `${rowName(it)} (${keyNames().join("+")} opens the panel)` : "No file or stream found for this player yet: press play first";
-      pill.replaceChildren(b); if (it?.kind === "yt" || it?.kind === "dash" || it?.drm) pill.append(mk("small", null, it.drm ? "DRM" : "Ghost"));
-      pill.dataset.url = it?.url || ""; pill.hidden = false; pillFor = v;
+    if (pop) return placePill(); // the list is open: it stays with its player
+    if (pillFor !== v || pill.hidden) {
+      const b = btn("", () => (pop ? closePop(true) : openPop()), "pb"); b.append(svg("down"), "Download this media", svg("caret"));
+      b.setAttribute("aria-expanded", "false"); b.setAttribute("aria-haspopup", "true"); b.title = "Choose what to save from this player";
+      b.onkeydown = (e) => { if (e.key === "Escape" && pop) { e.preventDefault(); e.stopPropagation(); closePop(true); } };
+      pill.replaceChildren(b); pill.hidden = false; pillFor = v;
     }
     placePill();
   }
   function placePill() {
     if (!pill || pill.hidden || !pillFor) return;
-    if (!pillFor.isConnected || document.fullscreenElement) return hidePill(0);
+    if (!pillFor.isConnected || document.fullscreenElement) return hidePill(0, true);
     const r = pillFor.getBoundingClientRect(), w = pill.offsetWidth || 200, h = pill.offsetHeight || 34;
-    if (r.bottom < 0 || r.top > innerHeight) return hidePill(0);
+    if (r.bottom < 0 || r.top > innerHeight) return hidePill(0, true);
     const below = r.bottom + 8 + h <= innerHeight - 8;
     pill.style.top = `${below ? r.bottom + 8 : Math.max(8, r.top + 8)}px`;
+    if (pop) { const ph = pop.el.offsetHeight, top = below ? r.bottom + 8 : Math.max(8, r.top + 8); pill.classList.toggle("up", top + h + 6 + ph > innerHeight - 8 && top - ph - 6 > 8); }
     pill.style.left = `${Math.max(8, Math.min(r.left + (below ? 0 : 8), innerWidth - w - 8))}px`;
   }
-  function hidePill(ms) { clearTimeout(pillHide); pillHide = setTimeout(() => { if (pill) pill.hidden = true; pillFor = null; }, ms); }
+  function hidePill(ms, force) {
+    if (pop && !force) return; // an open list stays until it's closed
+    clearTimeout(pillHide); pillHide = setTimeout(() => { closePop(); if (pill) pill.hidden = true; pillFor = null; }, ms);
+  }
+
+  // ---------- the list under the button: only this player's media ----------
+  // A plain file is just that file. A player fed through blob: (Instagram, Reddit, most feeds) can't say what it plays, so
+  // the list is what loaded most recently, which is what this player fetched when it started: the right one is at the top,
+  // with a thumbnail to tell it apart. Each has Save and Ghost here; the full panel is one link away.
+  let pop = null, popTick = 0;
+  function candidates(v) {
+    const g = groups(), src = v.currentSrc || v.src, audio = v.tagName === "AUDIO";
+    const exact = src && !/^blob:/.test(src) ? [...g.video, ...g.audio].find((it) => it.url === whole(abs(src) || "")) : null;
+    if (exact) return [exact];
+    // the most likely first: files that loaded while this player buffered, then the same length and frame size, then recency
+    const m = assoc.get(v) || new Map(), score = (it) => (m.get(it.url) || 0) * 10
+      + (it.meta?.d && v.duration && Math.abs(it.meta.d - v.duration) < 0.6 ? 15 : 0)
+      + (it.meta?.w && v.videoWidth && it.meta.w === v.videoWidth && it.meta.h === v.videoHeight ? 8 : 0);
+    return [...(audio ? g.audio : g.video), ...(audio ? g.video : g.audio)]
+      .sort((a, b) => (b.kind === "yt") - (a.kind === "yt") || soundOnly(a) - soundOnly(b) || score(b) - score(a) || (b.seen || 0) - (a.seen || 0)).slice(0, 5);
+  }
+  function openPop() {
+    if (!pill || !pillFor) return;
+    pop = { el: mk("div", "pop"), items: candidates(pillFor) };
+    pop.el.setAttribute("role", "group"); pop.el.setAttribute("aria-label", "Media from this player");
+    for (const it of pop.items) if (it.kind === "hls") hlsLoad(it);
+    pill.append(pop.el); pill.querySelector(".pb").setAttribute("aria-expanded", "true");
+    renderPop(); placePill();
+    pop.el.querySelector("button")?.focus({ preventScroll: true });
+    popTick = setInterval(renderPop, 500); // progress and results, as they come
+  }
+  function closePop(refocus) {
+    if (!pop) return;
+    clearInterval(popTick); pop.el.remove(); pop = null;
+    const b = pill?.querySelector(".pb"); b?.setAttribute("aria-expanded", "false"); if (refocus) b?.focus({ preventScroll: true });
+    placePill();
+  }
+  function miniThumb(it) {
+    if (it.mini) return it.mini;
+    const b = mk("div", "mth"); b.setAttribute("aria-hidden", "true"); it.mini = b;
+    const src = it.kind === "video" ? it.url : it.thumb?.querySelector("video")?.src;
+    if (it.kind === "yt") { const im = mk("img"); im.alt = ""; im.src = `https://i.ytimg.com/vi/${it.ytId}/default.jpg`; b.append(im); }
+    else if (src && !soundOnly(it)) { const v = mk("video"); v.muted = true; v.preload = "metadata"; v.src = /^blob:/.test(src) || src.includes("#") ? src : `${src}#t=0.5`; v.onerror = () => { b.dataset.note = "Video"; v.remove(); }; b.append(v); }
+    else b.dataset.note = it.kind === "audio" || soundOnly(it) ? "Sound" : "Stream";
+    return b;
+  }
+  function renderPop() {
+    if (!pop) return;
+    const a = root.activeElement, k = a && pop.el.contains(a) ? a.dataset.k : null;
+    const list = mk("div", "plist");
+    if (!pop.items.length) list.append(mk("p", "msg", "Nothing found for this player yet. Press play, wait a moment, then open this again."));
+    for (const it of pop.items) {
+      const r = mk("div", "pi"), tx = mk("div", "pt"), job = jobs.get(it.url), running = job && !job.done && !job.err;
+      tx.append(mk("div", "t", rowName(it)), mk("div", "meta", rowMeta(it)));
+      if (it.trim) tx.append(mk("div", "meta", `Trimmed ${hms(it.trim.start)} – ${hms(it.trim.end)}`));
+      const last = job && (running || !it.status || job.at >= it.status.at) ? { text: job.err || job.text, tone: job.err ? "err" : job.done && !job.warn ? "ok" : "" } : it.status;
+      if (last?.text) tx.append(mk("div", `msg ${last.tone || ""}`, last.text));
+      const acts = mk("div", "pa"), key = (b, n) => { b.dataset.k = `pop:${it.url}:${n}`; return b; };
+      if (running) acts.append(key(btn("Stop", () => job.ctl.abort(), "b sm"), "stop"));
+      else if (it.drm) acts.append(mk("span", "msg err", "DRM-protected: it can't be saved."));
+      else {
+        if (it.kind === "hls" && !it.variants) acts.append(mk("span", "msg", "Reading the stream…"));
+        else if (it.kind !== "yt" && it.kind !== "dash") acts.append(key(btn(it.trim ? "Save part" : "Save", () => { store.set("via", "save"); it.kind === "hls" ? runHls(it) : runDirect(it); renderPop(); }, "b sm pri"), "save"));
+        if (canGhost(it)) acts.append(key(btn("Ghost", () => { sendGhost(it); renderPop(); }, "b sm"), "ghost"));
+      }
+      tx.append(acts); r.append(miniThumb(it), tx); list.append(r);
+    }
+    const more = btn("Show everything in the panel", () => { const it = pop.items[0]; closePop(); hidePill(0, true); openAt(it); }, "lnk"); more.dataset.k = "pop:more";
+    pop.el.replaceChildren(list, more);
+    if (k) pop.el.querySelector(`[data-k="${CSS.escape(k)}"]`)?.focus({ preventScroll: true });
+  }
   // opens the panel on one item's row: its tab, scrolled to, focused and lit
   function openAt(it) {
-    if (!panel) toggle();
+    closePop(); if (!panel) toggle();
     if (!it) { if (tab !== "video") setTab("video"); return; }
     const t = it.kind === "audio" || soundOnly(it) ? "audio" : "video";
     if (tab !== t) { tab = t; store.set("tab", t); }
@@ -1492,11 +1594,12 @@
     say(`${rowName(it)}. ${row.querySelector("[data-k$=':main']")?.textContent || ""} is ready.`);
   }
   const watchPointer = (e) => {
-    if (!pillOn() || pillRaf) return;
+    if (!pillOn() || (pillRaf && e.type !== "pointerdown")) return;
     const x = e.clientX, y = e.clientY, touch = e.pointerType === "touch";
     pillRaf = requestAnimationFrame(() => {
       pillRaf = 0;
       if (e.composedPath?.().includes(host)) return; // on the pill or the panel
+      if (pop) { if (e.type === "pointerdown") { closePop(); hidePill(900); } return; }
       const v = mediaAt(x, y);
       if (v) { showPill(v); if (touch) hidePill(4000); } else if (pill && !pill.hidden) hidePill(900);
     });
